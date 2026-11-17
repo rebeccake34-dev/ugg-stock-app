@@ -1,0 +1,10 @@
+{
+  "name": "UGG 货位助手",
+  "short_name": "货位助手",
+  "description": "查找鞋子货位、每日清点、退库登记",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f6f2ec",
+  "theme_color": "#2b2118",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

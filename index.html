@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2b2118">
+<title>UGG 货位助手 · Stock Finder</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <a href="#/search" class="brand">UGG 货位助手</a>
+  <button id="staffChip" class="staff-chip" type="button" title="当前操作人">未设置姓名</button>
+</header>
+
+<main id="view" aria-live="polite"></main>
+
+<nav class="tabbar">
+  <a href="#/search" data-tab="search"><span class="ico">🔍</span>查找</a>
+  <a href="#/map" data-tab="map"><span class="ico">🗺️</span>货位</a>
+  <a href="#/count" data-tab="count"><span class="ico">✅</span>清点</a>
+  <a href="#/returns" data-tab="returns"><span class="ico">📦</span>退库</a>
+  <a href="#/more" data-tab="more"><span class="ico">☰</span>更多</a>
+</nav>
+
+<div id="toast" class="toast" role="status"></div>
+
+<script src="data/seed.js"></script>
+<script src="vendor/xlsx.full.min.js" defer></script>
+<script src="app.js"></script>
+</body>
+</html>
