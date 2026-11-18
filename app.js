@@ -12,7 +12,7 @@
   const S = {
     loaded: { locations: false, meta: false, products: false },
     locations: [], products: [], vendImportedAt: '', unitNames: {}, lowStock: 3,
-    returns: [], counts: [], log: [], imports: [], laybys: [],
+    returns: [], counts: [], log: [], imports: [], laybys: [], notes: [],
     layout: { storeroom: {}, store: {} },
     cap: { h: 6, l: 7, d: 2, display: 2, mode: 'cell', xl: ['15901', '15902'], xlH: 5, xlD: 1, daily: 8 },
     staff: lsGet(LS_STAFF) || '',
@@ -323,9 +323,9 @@
   const routes = {
     today: viewToday, overview: viewStock, layby: viewLayby, search: viewSearch, map: viewMap, loc: viewLoc, count: viewCount, countReport: viewCountReport,
     returns: viewReturns, stock: viewStockHub, more: viewMore, log: viewLog, import: viewImport, product: viewProduct,
-    shelf: viewShelf, tidy: viewTidy, docs: viewDocs, bulk: viewBulk,
+    shelf: viewShelf, tidy: viewTidy, docs: viewDocs, bulk: viewBulk, notes: viewNotes,
   };
-  const GROUP = { bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', layby: 'stock', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
+  const GROUP = { notes: 'today', bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', layby: 'stock', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
   function navigate(r, push = true) {
     if (push) stack.push(cur);
     if (stack.length > 50) stack.shift();
@@ -934,14 +934,39 @@
 
   // ---------------------------------------------------------------- Vend import
   let importResultHtml = '';
+  // Lightspeed (Vend) inventory report for the store, next 4 weeks from today, sorted by Closing Inventory (high → low)
+  function vendReportUrl() {
+    const d0 = new Date(); d0.setHours(13, 0, 0, 0);
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 27);
+    const iso = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T13:00:00`; };
+    const def = {
+      metric: '', constraints: { entities: [
+        { id: '06d8cc56-0220-11ec-fa62-baee8515959b', name: 'Syd Rouse Hill 22', type: 'outlet', exclude: false },
+        { name: '', exclude: false, id: 'on_hand', type: 'stock', hidden: true }] },
+      granularity: 'week', periodType: 'next_n', periodCount: 4, selectedDate: iso(d0), startDate: iso(d0), endDate: iso(d1),
+      order: [{ dimension: 'product', alphabetical: false, direction: 'desc', metric: 'inventory_period_end_count' }],
+      dateGrouping: 'none', productGrouping: 'all', options: { showInactiveProducts: false }, reportView: 'table',
+      optionalAggregates: ['item_count', 'inventory_avg_value', 'stock_inbound', 'missed_item_count', 'potential_item_count', 'inventory_period_end_count'],
+      dimensionMetadata: [{ dimension: 'product_variant', metadata: ['sku', 'primary_image', 'subtitle'] }],
+      forecastOptions: { factor_stockouts_into_forecast: false },
+    };
+    return 'https://zeone.retail.lightspeed.app/reporting/inventory_product?definition=' + encodeURIComponent(JSON.stringify(def)) + '&id=inventory-replenishment&type=prepared';
+  }
   function viewImport() {
     view(`${backLink()}
       <h1>导入 Vend 库存</h1>
-      <div class="card"><ol class="sop small">
-          <li>在 Vend（Lightspeed）后台导出库存报表（和之前的 period end count 报表同一种），下载 Excel (.xlsx) 或 CSV</li>
-          <li>点下面的按钮选择这个文件</li>
-          <li>表格里要有 <b>Tag</b>（款号）和 <b>Current Inventory</b>（当前库存）两列</li></ol>
-        <input type="file" id="file" accept=".xlsx,.xls,.csv" style="margin-top:8px">
+      <div class="card stack">
+        <b>第一步：在 Lightspeed 导出报表</b>
+        <a class="btn primary block" href="${esc(vendReportUrl())}" target="_blank" rel="noopener">📊 打开 Vend 库存报表（今天起 4 周）</a>
+        <ol class="sop small">
+          <li>打开上面的报表（第一次要登录 Lightspeed）</li>
+          <li>检查 <b>Filter（筛选）</b>：门店是 <b>Syd Rouse Hill 22</b>，时间是今天起 4 周，按周（week）</li>
+          <li>在表格里点 <b>Closing Inventory</b> 那一列的标题，让数字<b>从大到小</b>排列（箭头朝下；不对就再点一次）</li>
+          <li>点 <b>Export（导出）</b>，下载 Excel（.xlsx）文件</li>
+        </ol>
+        <b>第二步：导入到这里</b>
+        <div class="small muted">选择刚下载的文件。表格里要有 <b>Tag</b>（款号）和 <b>Current Inventory</b>（当前库存）两列。</div>
+        <input type="file" id="file" accept=".xlsx,.xls,.csv" style="margin-top:4px">
         <div id="impResult" style="margin-top:10px">${importResultHtml}</div></div>
       <div class="small muted">上次导入：${esc(fmtTime(S.vendImportedAt)) || '—'}。导入只更新库存数字，不会改动货位。导入后所有设备都会看到新数字。</div>`);
     $('#file').onchange = async (e) => {
@@ -1001,7 +1026,7 @@
   }
 
   // ---------------------------------------------------------------- change log
-  const LOG_TYPES = { move: '移动', add: '添加', remove: '删除', note: '改备注', rename: '改名', newloc: '新位置', delloc: '删位置', count: '清点', return: '退库登记', 'return-sent': '退库寄出', 'return-del': '删退库', import: '导入 Vend', 'stock-in': '到货入库', 'stock-out': '退货出库', 'stock-undo': '撤销库存变动', move: '库存变动', layby: 'Layby 登记', 'layby-notified': 'Layby 已通知', 'layby-collected': 'Layby 已取货', layout: '调整地图', 'shelf-size': '货架格数', capacity: '容量设置' };
+  const LOG_TYPES = { move: '移动', add: '添加', remove: '删除', note: '改备注', rename: '改名', newloc: '新位置', delloc: '删位置', count: '清点', return: '退库登记', 'return-sent': '退库寄出', 'return-del': '删退库', import: '导入 Vend', 'stock-in': '到货入库', 'stock-out': '退货出库', 'stock-undo': '撤销库存变动', move: '库存变动', layby: 'Layby 登记', 'layby-notified': 'Layby 已通知', 'layby-collected': 'Layby 已取货', 'note-add': '新便签', layout: '调整地图', 'shelf-size': '货架格数', capacity: '容量设置' };
   function logText(g) {
     const d = g.detail || {};
     switch (g.type) {
@@ -1021,6 +1046,7 @@
       case 'stock-out': return `导入退货单「${d.source}」：${d.n} 款 −${d.total} 件`;
       case 'stock-undo': return `撤销「${d.source}」（${d.n} 款）`;
       case 'move': return `${moveMeta(d.kind).zh}：${d.code ? d.code + ' ' : ''}${d.source}，${d.n} 款 ${d.total} 件`;
+      case 'note-add': return `新便签：${d.text}`;
       case 'layby': return `登记 layby：${d.name} 等 ${d.code}`;
       case 'layby-notified': return `已通知 ${d.name}（${d.code}）`;
       case 'layby-collected': return `${d.name} 已取货（${d.code}）`;
@@ -1050,6 +1076,7 @@
   function viewMore() {
     view(`<h1>更多</h1>
       <div class="card stack">
+        <a class="btn block" ${goAttr('notes')}>📝 便签</a>
         <a class="btn block" ${goAttr('overview')}>📊 库存总览</a>
         <a class="btn block" ${goAttr('docs', '', { t: 'arrival' })}>📥 一键导入到货单</a>
         <a class="btn block" ${goAttr('docs', '', { t: 'return_wh' })}>📤 一键导入退货单</a>
@@ -1769,6 +1796,8 @@
     view(`<div class="row between"><button class="btn small" id="dPrev">‹</button>
         <div style="text-align:center"><b style="font-size:18px">${esc(date)} ${WEEK[wd]}</b>${isToday ? '<div class="small muted">今天</div>' : `<div><button class="linkish" id="dToday">回到今天</button></div>`}</div>
         <button class="btn small" id="dNext" ${isToday ? 'disabled' : ''}>›</button></div>
+      ${(() => { const open = sortNotes(S.notes.filter((n) => !n.done)); return `<div class="card" style="margin-top:10px"><div class="row between"><b>📝 便签 ${open.length ? `(${open.length})` : ''}</b><div class="row"><button class="btn small" data-newnote="1">＋ 新便签</button><a class="btn small" ${goAttr('notes')}>全部 ›</a></div></div>
+        ${open.length ? `<div class="notes-grid" style="margin-top:8px">${open.slice(0, 4).map(noteCard).join('')}</div>${open.length > 4 ? `<a class="small" ${goAttr('notes')}>还有 ${open.length - 4} 张 ›</a>` : ''}` : '<div class="small muted" style="margin-top:4px">没有进行中的便签</div>'}</div>`; })()}
       <div class="progress" style="margin:10px 0 4px"><div style="width:${list.length ? doneN / list.length * 100 : 0}%"></div></div>
       <div class="small muted" style="margin-bottom:10px">完成 ${doneN} / ${list.length} 项${[1, 3, 5].includes(wd) ? ' · 今天是收货日' : ''}</div>
       <div class="card">
@@ -1797,6 +1826,7 @@
         <div style="margin-top:4px">周一 / 周三 / 周五：收货 → 导入到货单 → 通知 layby 客人 → 展示新品 → 打价格标签</div>
         <div style="margin-top:4px">周一：订文具　周三：订购物袋　不定期：退货（库存 → 📤 退回仓库）</div>
       </div>`);
+    bindNotes();
     $('#dPrev').onclick = () => { dayView = dateAdd(dayView, -1); render(true); };
     if (!isToday) { $('#dNext').onclick = () => { dayView = dateAdd(dayView, 1); render(true); }; $('#dToday').onclick = () => { dayView = today(); render(true); }; }
     $$('[data-task]').forEach((b) => b.onclick = async () => {
@@ -2541,6 +2571,79 @@ ${catalog()}`);
     };
   }
 
+  // ================================================================ 便签 sticky notes (shared, synced)
+  const NOTE_COLORS = { yellow: '#fff4b8', pink: '#ffd9e1', blue: '#dbeafe', green: '#dcf3e2' };
+  const putNote = (n) => write('notes/' + n.id, () => db.doc('notes/' + n.id).set(strip(n)));
+  const delNote = (id) => write('notes/' + id, () => db.doc('notes/' + id).delete());
+  // codes written in a note become links to the product page
+  function noteHtml(text) {
+    return esc(text).replace(/\b([A-Za-z_]{0,12}\d{3,7}[A-Za-z]?)\b/g, (m) => {
+      const c = resolveCode(m);
+      return P[c] ? `<a ${goAttr('product', c)} class="code">${m}</a>` : m;
+    }).replace(/\n/g, '<br>');
+  }
+  function noteCard(n) {
+    return `<div class="note ${n.done ? 'done' : ''}" style="background:${NOTE_COLORS[n.color] || NOTE_COLORS.yellow}">
+      <div class="note-text">${noteHtml(n.text)}</div>
+      <div class="note-meta small">${n.pinned ? '📌 ' : ''}${esc(n.staff || '')} · ${esc(fmtTime(n.updatedAt || n.createdAt))}${n.done && n.doneBy ? ' · ✓ ' + esc(n.doneBy) : ''}</div>
+      <div class="row note-actions">
+        <button class="btn small" data-nt="done" data-id="${esc(n.id)}">${n.done ? '↩︎ 未完成' : '✓ 完成'}</button>
+        <button class="btn small" data-nt="pin" data-id="${esc(n.id)}">${n.pinned ? '取消置顶' : '📌 置顶'}</button>
+        <button class="btn small" data-nt="edit" data-id="${esc(n.id)}">✏️ 编辑</button>
+        <button class="btn small danger" data-nt="del" data-id="${esc(n.id)}">删除</button>
+      </div></div>`;
+  }
+  async function editNote(n) {
+    const res = await modal(`<b>${n ? '编辑便签' : '新便签'}</b>
+      <textarea id="ntText" rows="5" style="margin-top:8px" placeholder="例如：AS2115 38码 客人周五来取 / 周三记得订购物袋">${esc(n ? n.text : '')}</textarea>
+      <div class="row" style="margin-top:8px">${Object.entries(NOTE_COLORS).map(([k, v]) => `<label class="swatch" style="background:${v}"><input type="radio" name="ntColor" value="${k}" ${(n ? n.color : 'yellow') === k ? 'checked' : ''}></label>`).join('')}
+        <label class="row small" style="margin-left:auto"><input type="checkbox" id="ntPin" style="width:auto" ${n && n.pinned ? 'checked' : ''}> 📌 置顶</label></div>`,
+      [{ label: '取消', value: () => null }, { label: '保存', cls: 'primary', value: (d) => ({ text: $('#ntText', d).value.trim(), color: ($('input[name=ntColor]:checked', d) || {}).value || 'yellow', pinned: $('#ntPin', d).checked }) }]);
+    if (!res || !res.text) return;
+    if (!await ensureStaff()) return;
+    if (n) { Object.assign(n, res, { updatedAt: nowISO(), updatedBy: S.staff }); putNote(n); }
+    else {
+      const note = Object.assign({ id: uid(), done: false, createdAt: nowISO(), updatedAt: nowISO(), staff: S.staff }, res);
+      S.notes.unshift(note); putNote(note); addLog('note-add', { text: res.text.slice(0, 40) });
+    }
+    render(false);
+  }
+  function bindNotes() {
+    $$('[data-nt]').forEach((b) => b.onclick = async () => {
+      const n = S.notes.find((x) => x.id === b.dataset.id); if (!n) return;
+      const act = b.dataset.nt;
+      if (act === 'edit') { editNote(n); return; }
+      if (!await ensureStaff()) return;
+      if (act === 'del') {
+        if (!await confirmDlg('删除这张便签？', '删除')) return;
+        S.notes = S.notes.filter((x) => x !== n); delNote(n.id); render(false); return;
+      }
+      if (act === 'done') { n.done = !n.done; n.doneBy = n.done ? S.staff : ''; n.doneAt = n.done ? nowISO() : ''; }
+      if (act === 'pin') n.pinned = !n.pinned;
+      n.updatedAt = nowISO(); putNote(n); render(false);
+    });
+    $$('[data-newnote]').forEach((b) => b.onclick = () => editNote(null));
+  }
+  const sortNotes = (list) => list.slice().sort((a, b) => (a.done - b.done) || ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+  let noteFilter = 'open';
+  function viewNotes() {
+    const q = (lsGet('ugg-note-q') || '').toLowerCase();
+    let list = S.notes.filter((n) => noteFilter === 'all' || (noteFilter === 'open' ? !n.done : n.done));
+    if (q) list = list.filter((n) => n.text.toLowerCase().includes(q));
+    view(`${backLink()}
+      <div class="row between"><h1 style="margin:0">📝 便签</h1><button class="btn primary" data-newnote="1">＋ 新便签</button></div>
+      <div class="seg" style="margin-top:10px">
+        <button data-nf="open" class="${noteFilter === 'open' ? 'on' : ''}">进行中 (${S.notes.filter((n) => !n.done).length})</button>
+        <button data-nf="done" class="${noteFilter === 'done' ? 'on' : ''}">已完成</button>
+        <button data-nf="all" class="${noteFilter === 'all' ? 'on' : ''}">全部</button></div>
+      <input id="nq" type="search" placeholder="搜索便签" value="${esc(q)}" style="margin-bottom:10px">
+      <div class="notes-grid">${sortNotes(list).map(noteCard).join('') || '<div class="empty-state">没有便签。点「＋ 新便签」记下要交接、要提醒的事。</div>'}</div>
+      <p class="small muted">便签所有同事都能看到。写在便签里的款号会自动变成链接，点一下就能看到货位和库存。</p>`);
+    $$('[data-nf]').forEach((b) => b.onclick = () => { noteFilter = b.dataset.nf; render(false); });
+    $('#nq').addEventListener('input', (e) => { lsSet('ugg-note-q', e.target.value); clearTimeout(viewNotes._t); viewNotes._t = setTimeout(() => render(false), 300); });
+    bindNotes();
+  }
+
   // ---------------------------------------------------------------- boot
   function renderStaff() {
     const c = $('#staffChip');
@@ -2607,6 +2710,9 @@ ${catalog()}`);
     subscribe(db.doc('meta/layout'), (snap) => {
       const d = snap.exists ? JSON.parse(JSON.stringify(snap.data())) : {};
       S.layout = { storeroom: d.storeroom || {}, store: d.store || {}, labels: d.labels || null, room: d.room || null };
+    });
+    subscribe(db.collection('notes').orderBy('createdAt', 'desc').limit(300), (snap) => {
+      S.notes = snap.docs.map((d) => Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data()))));
     });
     subscribe(db.collection('laybys').orderBy('createdAt', 'desc').limit(300), (snap) => {
       S.laybys = snap.docs.map((d) => Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data()))));
