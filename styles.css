@@ -208,3 +208,7 @@ dialog textarea { min-height: 160px; font-size: 13px; }
 .mapsvg { max-width: none; }
 .zoombar { display: flex; align-items: center; gap: 6px; margin: 4px 0 6px; flex-wrap: wrap; }
 .zoombar .zv { min-width: 46px; text-align: center; font-weight: 700; font-size: 13px; }
+.bk-row { padding: 10px 0; border-top: 1px solid var(--line); }
+.bk-row:first-child { border-top: 0; }
+.bk-row select.code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; padding: 4px 6px; width: auto; max-width: 100%; }
+.bk-row select.small { font-size: 13px; padding: 6px 8px; }

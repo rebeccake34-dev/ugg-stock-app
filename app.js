@@ -305,9 +305,9 @@
   const routes = {
     today: viewToday, overview: viewStock, layby: viewLayby, search: viewSearch, map: viewMap, loc: viewLoc, count: viewCount, countReport: viewCountReport,
     returns: viewReturns, stock: viewStockHub, more: viewMore, log: viewLog, import: viewImport, product: viewProduct,
-    shelf: viewShelf, tidy: viewTidy, docs: viewDocs,
+    shelf: viewShelf, tidy: viewTidy, docs: viewDocs, bulk: viewBulk,
   };
-  const GROUP = { loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', layby: 'stock', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
+  const GROUP = { bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', layby: 'stock', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
   function navigate(r, push = true) {
     if (push) stack.push(cur);
     if (stack.length > 50) stack.shift();
@@ -556,7 +556,7 @@
       <div class="card stack"><b>添加款号到这里</b>
         <div class="row"><input id="newCode" type="text" placeholder="款号，例如 AS2115" class="grow" style="flex:2" autocapitalize="characters"><input id="newNote" type="text" placeholder="备注（颜色/尺码，可不填）" class="grow" style="flex:3"></div>
         <div id="newHint" class="small muted"></div>
-        <button class="btn primary" id="addBtn">＋ 添加</button></div>
+        <div class="row"><button class="btn primary grow" id="addBtn">＋ 添加</button><a class="btn" ${goAttr('bulk', id)}>📥 批量添加到这里</a></div></div>
       ${l.area !== 'storeroom' ? `<div class="row"><button class="btn small" id="renameLoc">改位置名字</button>${l.area === 'other' ? '<button class="btn small danger" id="delLoc">删除这个位置</button>' : ''}</div>` : ''}
       <h2>这个位置的修改记录</h2>
       <div class="card">${S.log.filter((g) => g.detail && (g.detail.to === id || g.detail.from === id || g.detail.loc === id)).slice(0, 15).map(logLine).join('') || '<span class="muted small">暂无</span>'}</div>`);
@@ -1343,6 +1343,7 @@
         <div class="small muted">Excel / CSV / 粘贴文字，自动识别款号和数量，确认后马上更新库存。</div>
       </div>
       <div class="row">
+        <a class="btn small" ${goAttr('bulk')}>📥 一键批量上架</a>
         <a class="btn small" ${goAttr('returns')}>📦 待退清单 ${pend}</a>
         <a class="btn small" ${goAttr('layby')}>🧾 Layby 等货 ${waiting}</a>
         <a class="btn small" ${goAttr('overview')}>📊 库存总览</a>
@@ -2034,6 +2035,7 @@
       </div>
       ${body}
       ${mapEditing ? '' : `<div class="row" style="margin-top:12px">
+        <a class="btn small primary" ${goAttr('bulk')}>📥 一键批量上架</a>
         ${mapTab !== 'other' ? '<button class="btn small" id="editLay">✏️ 调整地图</button>' : ''}
         <a class="btn small" ${goAttr('tidy')}>💡 整理建议</a>
         <button class="btn small" id="newLoc">＋ 新增位置</button>
@@ -2090,6 +2092,275 @@
       ...S.locations.flatMap((l) => (l.items.length ? l.items : [{ code: '', note: '（空）' }]).map((it) => [l.area === 'storeroom' ? '仓库' : l.area === 'store' ? '店面' : '其他', locLabel(l), it.code, it.note, P[resolveCode(it.code)] ? P[resolveCode(it.code)].qty : '']))]));
   }
 
+  // ================================================================ bulk shelving: add many styles to locations at once, with smart recognition
+  // Local recognition: full / partial codes, English names, a one-letter typo, "x3", "3双", "38码".
+  // Claude version: a photo (box labels, delivery slip, handwritten list) or leftover text can be read by Claude.
+  let sampleFn = null, sampleImages = false;
+  const BRAND_RE = /^(australian shepherd|everau|ugg everau|urban ugg|ugg express|ugg|as\*|as\s*\*|tarramarra)\s*/i;
+  const cleanName = (n) => String(n || '').toLowerCase().replace(BRAND_RE, '').replace(/[*]/g, ' ').trim();
+  function editDist1(a, b) {
+    if (a === b) return true;
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0, j = 0, diff = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++diff > 1) return false;
+      if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+    }
+    return diff + (a.length - i) + (b.length - j) <= 1;
+  }
+  const CODE_TOKEN = /(?<![A-Za-z0-9])([A-Za-z]{0,4}[_\s-]?[A-Za-z]{0,3}\d{3,7}[A-Za-z]?)(?![A-Za-z0-9])/g;
+  function matchCodeToken(tok) {
+    const c = norm(tok).replace(/-/g, '');
+    if (!c) return null;
+    const r = resolveCode(c);
+    if (P[r]) return { code: r, how: '款号' };
+    const all = Object.keys(P);
+    const digits = (c.match(/\d+/) || [''])[0], letters = c.replace(/\d.*$/, '');
+    if (digits.length >= 3) {
+      // number only (or wrong prefix): same digits
+      let cand = all.filter((k) => (k.match(/\d+/) || [''])[0] === digits && (!letters || k.startsWith(letters) || !/^[A-Z]/.test(k)));
+      if (!cand.length) cand = all.filter((k) => (k.match(/\d+/) || [''])[0] === digits);
+      if (cand.length === 1) return { code: cand[0], how: '数字匹配' };
+      if (cand.length > 1) return { code: cand.sort((a, b) => a.length - b.length)[0], options: cand, how: '数字匹配' };
+      // one wrong / missing / extra character
+      const fz = all.filter((k) => editDist1(k, c));
+      if (fz.length === 1) return { code: fz[0], how: '自动纠错' };
+      if (fz.length > 1) return { code: fz[0], options: fz, how: '自动纠错' };
+      // partial number (at least 4 digits)
+      if (digits.length >= 4) {
+        const pc = all.filter((k) => (k.match(/\d+/) || [''])[0].startsWith(digits));
+        if (pc.length) return { code: pc[0], options: pc.length > 1 ? pc : undefined, how: '部分款号' };
+      }
+    }
+    return null;
+  }
+  function matchName(text) {
+    const words = text.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 3 && !/^(size|pcs|pair|pairs|the|and|men|kids?|for)$/.test(w));
+    if (!words.length) return null;
+    const wantKids = /kid|baby|童/.test(text.toLowerCase()), wantMen = /\bmen\b|男/.test(text.toLowerCase());
+    const scored = S.products.filter((p) => p.code).map((p) => {
+      const n = cleanName(p.name);
+      const hits = words.filter((w) => n.split(/\s+/).some((x) => x === w || (w.length >= 4 && x.startsWith(w)))).length;
+      let score = hits / words.length;
+      if (/kid|baby|bootie/.test(n) !== wantKids) score -= 0.3;
+      if (/\bmen\b/.test(n) !== wantMen) score -= 0.2;
+      return { code: p.code, score, len: n.length };
+    }).filter((x) => x.score >= 0.99 || (words.length > 1 && x.score >= 0.5)).sort((a, b) => b.score - a.score || a.len - b.len);
+    if (!scored.length) {
+      // shelf-sheet notes ("Talia", "gift set")
+      const note = S.locations.flatMap((l) => l.items).find((it) => it.code && it.note && words.every((w) => it.note.toLowerCase().includes(w)));
+      return note ? { code: resolveCode(note.code), how: '货位表备注' } : null;
+    }
+    return { code: scored[0].code, options: scored.length > 1 ? scored.slice(0, 6).map((x) => x.code) : undefined, how: '英文名' };
+  }
+  function recognize(text) {
+    const out = [];
+    String(text || '').split(/\n|;|；|，|,|、|\s\/\s/).map((x) => x.trim()).filter(Boolean).forEach((seg0) => {
+      let seg = seg0;
+      let qty = null, size = '';
+      const qm = seg.match(/(?:[x×*]\s*(\d{1,3})\b)|(?:\b(\d{1,3})\s*(?:双|件|个|盒|pcs?|pairs?|prs)\b)/i);
+      if (qm) qty = parseInt(qm[1] || qm[2], 10);
+      const sm = seg.match(/(?:size|sz|码|尺码)\s*[:：]?\s*(\d{1,2}(?:\.5)?)|(\d{2}(?:\.5)?)\s*码/i);
+      if (sm) size = sm[1] || sm[2];
+      // common typos inside codes: l / I → 1, o / O → 0 (e.g. "as2l15" → AS2115)
+      seg = seg.replace(/(^|[^A-Za-z0-9])([A-Za-z]{0,4})(\d[\dlIoO]{2,7})([A-Za-z]?)(?![A-Za-z0-9])/g, (m, pre, a, b, c) => pre + a + b.replace(/[lI]/g, '1').replace(/[oO]/g, '0') + c);
+      const toks = [...seg.matchAll(CODE_TOKEN)].map((m) => m[1]).filter((t) => /\d{3,}/.test(t));
+      const found = toks.map((t) => Object.assign({ raw: t }, matchCodeToken(t) || { code: null }));
+      const good = found.filter((f) => f.code);
+      if (good.length) {
+        good.forEach((f) => out.push({ raw: seg, code: f.code, options: f.options, how: f.how, qty: good.length === 1 ? qty : null, size: good.length === 1 ? size : '' }));
+        found.filter((f) => !f.code).forEach((f) => out.push({ raw: f.raw, code: null, how: '' }));
+      } else {
+        const nm = matchName(seg.replace(CODE_TOKEN, ' '));
+        if (nm) out.push({ raw: seg, code: nm.code, options: nm.options, how: nm.how, qty, size });
+        else if (/[A-Za-z0-9]{3,}/.test(seg)) out.push({ raw: seg, code: null, how: '' });
+      }
+    });
+    // merge the same style
+    const merged = [], byCode = {};
+    out.forEach((x) => {
+      if (x.code && byCode[x.code]) { const m = byCode[x.code]; if (x.qty) m.qty = (m.qty || 0) + x.qty; if (x.size) m.size = [m.size, x.size].filter(Boolean).join(' '); return; }
+      merged.push(x); if (x.code) byCode[x.code] = x;
+    });
+    return merged;
+  }
+  // where should a style go?  same style already there → same family (prefix + first digits / kids) → most free space
+  function suggestPlace(code, qty, planned, est) {
+    const room = (codeLocs[code] || []).filter((id) => locById[id] && locById[id].area === 'storeroom');
+    if (room.length) return { id: room[0], why: '同款已经在这里', keep: true };
+    const anyLoc = (codeLocs[code] || [])[0];
+    const need = Math.max(1, qty || (P[code] ? P[code].qty : 1)) * boxFactor(code);
+    const cells = S.locations.filter((l) => l.area === 'storeroom');
+    const free = (l) => cellCap(l) - (est.cell[l.id] || 0) - (planned[l.id] || 0);
+    const fam = (c) => { const m = c.match(/^([A-Z_]*)(\d{2})/); return m ? m[1] + m[2] + (/K$/.test(c) ? 'K' : '') : c; };
+    const f = fam(code);
+    const famCells = cells.filter((l) => l.items.some((it) => it.code && fam(resolveCode(it.code)) === f));
+    const famUnits = new Set(famCells.map((l) => l.unit));
+    let pick = famCells.filter((l) => free(l) >= need).sort((a, b) => free(b) - free(a))[0];
+    let why = '和同系列的款放一起';
+    if (!pick) { pick = cells.filter((l) => famUnits.has(l.unit) && free(l) >= need).sort((a, b) => free(b) - free(a))[0]; why = '同系列所在的货架'; }
+    if (!pick) { pick = cells.filter((l) => !l.items.length && free(l) >= need)[0] || cells.slice().sort((a, b) => free(b) - free(a))[0]; why = pick && !pick.items.length ? '空格子' : '空位最多'; }
+    if (!pick) return anyLoc ? { id: anyLoc, why: '已有货位', keep: true } : null;
+    planned[pick.id] = (planned[pick.id] || 0) + need;
+    return { id: pick.id, why };
+  }
+  let bulkText = '', bulkRows = null, bulkTarget = '', bulkAddStock = false, bulkBusy = '';
+  function locOptions(selectedId) {
+    const groups = {};
+    S.locations.forEach((l) => { const g = l.area === 'storeroom' ? unitName(l.unit) : l.area === 'store' ? '店面' : '其他'; (groups[g] = groups[g] || []).push(l); });
+    return Object.entries(groups).map(([g, ls]) => `<optgroup label="${esc(g)}">${ls.map((l) => `<option value="${esc(l.id)}" ${l.id === selectedId ? 'selected' : ''}>${esc(locLabel(l))}${l.items.length ? '（' + esc(l.items.slice(0, 3).map((it) => it.code || it.note).join(' ')) + (l.items.length > 3 ? '…' : '') + '）' : '（空）'}</option>`).join('')}</optgroup>`).join('');
+  }
+  function buildBulkRows(items) {
+    const est = estimate(), planned = {};
+    bulkRows = items.map((x) => {
+      const r = Object.assign({ on: !!x.code }, x);
+      if (x.code) {
+        const sp = bulkTarget ? { id: bulkTarget, why: '你选的位置' } : suggestPlace(x.code, x.qty, planned, est);
+        r.target = sp ? sp.id : ''; r.why = sp ? sp.why : ''; r.keep = !!(sp && sp.keep);
+        if (r.keep && (codeLocs[x.code] || []).includes(r.target)) r.on = false;
+      }
+      return r;
+    });
+  }
+  function viewBulk(target, params) {
+    if ((target || '') !== bulkTarget) { bulkTarget = target || ''; if (bulkRows) buildBulkRows(bulkRows); }
+    const rows = bulkRows || [];
+    const nOn = rows.filter((r) => r.on && r.code && r.target).length;
+    const unknown = rows.filter((r) => !r.code);
+    view(`${backLink()}
+      <h1>📥 一键批量上架</h1>
+      <div class="card stack">
+        <div class="small muted">把要上架的货打进来：款号、部分款号、英文名都可以，一行或一段都行，例如<br><span class="code">AS2115 x3, isola 38码 2双, 15801, tay kids</span></div>
+        <textarea id="bkText" rows="4" placeholder="AS2115 x3&#10;isola 38码 2双&#10;15801 15802&#10;tay kids">${esc(bulkText)}</textarea>
+        <div class="row">
+          <button class="btn primary" id="bkGo">🔎 识别</button>
+          ${sampleImages ? '<label class="btn">📷 拍照识别<input type="file" id="bkPhoto" accept="image/*" capture="environment" hidden></label>' : ''}
+          <label class="btn">📄 Excel / CSV<input type="file" id="bkFile" accept=".xlsx,.xls,.csv" hidden></label>
+        </div>
+        ${sampleImages ? '<div class="small muted">拍照识别：拍鞋盒标签、送货单或手写清单，Claude 会读出款号和数量（会用到你的 Claude 额度）。</div>' : ''}
+        ${bulkBusy ? `<div class="banner">${esc(bulkBusy)}</div>` : ''}
+        <label class="field">放到哪里
+          <select id="bkTarget"><option value="">🤖 智能分配（同款 → 同系列 → 空位最多）</option>${locOptions(bulkTarget)}</select></label>
+      </div>
+      ${rows.length ? `<h2>识别结果（${rows.filter((r) => r.code).length} 款${unknown.length ? `，${unknown.length} 条没认出` : ''}）</h2>
+        <div class="card">${rows.map((r, i) => {
+          const p = r.code ? P[r.code] : null;
+          return `<div class="bk-row ${r.code ? '' : 'unk'}">
+            <div class="row" style="gap:6px;align-items:flex-start">
+              <input type="checkbox" data-bon="${i}" ${r.on ? 'checked' : ''} ${r.code ? '' : 'disabled'} style="width:auto;margin-top:6px">
+              <div class="grow">
+                ${r.code ? (r.options && r.options.length > 1
+                  ? `<select data-bcode="${i}" class="code">${r.options.map((c) => `<option value="${esc(c)}" ${c === r.code ? 'selected' : ''}>${esc(c)} ${esc(shortName(P[c] ? P[c].name : ''))}</option>`).join('')}</select>`
+                  : `<span class="code">${esc(r.code)}</span> <span class="small muted">${esc(shortName(p ? p.name : ''))}</span>`)
+                  : `<span style="color:var(--bad)">没认出：</span><span class="code">${esc(r.raw)}</span> <input type="text" data-bfix="${i}" placeholder="手动输入款号" style="width:130px;padding:4px 8px" autocapitalize="characters">`}
+                <div class="small muted">${r.code ? `${esc(r.how || '')}${r.raw && norm(r.raw) !== r.code ? ' ·「' + esc(r.raw) + '」' : ''} · 库存 ${p ? p.qty : '—'}${(codeLocs[r.code] || []).length ? ' · 现在在：' + codeLocs[r.code].map((id) => esc(locLabel(locById[id]))).join('、') : ' · <span style="color:var(--warn)">还没有货位</span>'}` : ''}</div>
+              </div>
+              ${r.code ? `<label class="field" style="width:64px">数量<input type="number" min="1" data-bqty="${i}" value="${r.qty || ''}" placeholder="—"></label>` : ''}
+            </div>
+            ${r.code ? `<div class="row" style="margin:4px 0 0 26px;gap:6px"><select data-btgt="${i}" class="grow small">${locOptions(r.target)}</select></div>
+              <div class="small" style="margin-left:26px;color:${r.keep ? 'var(--muted)' : 'var(--ok)'}">${r.keep && (codeLocs[r.code] || []).includes(r.target) ? '✓ 已经在这里，不用重复添加' : '→ ' + esc(r.why || '')}</div>` : ''}
+          </div>`;
+        }).join('')}</div>
+        ${unknown.length && sampleFn ? '<button class="btn small" id="bkAsk">🤖 让 Claude 识别没认出的</button>' : ''}
+        <label class="row small" style="margin:10px 0"><input type="checkbox" id="bkStock" ${bulkAddStock ? 'checked' : ''} style="width:auto"> 同时把数量加进库存（当作新到货 +）。如果已经导入了到货单，就不要勾。</label>
+        <div class="sticky-actions row"><button class="btn" id="bkClear">清空</button><button class="btn primary grow" id="bkApply" ${nOn ? '' : 'disabled'}>✔ 一键上架 ${nOn} 款</button></div>` : ''}`);
+    const ta = $('#bkText');
+    ta.addEventListener('input', () => { bulkText = ta.value; });
+    $('#bkGo').onclick = () => { bulkText = ta.value; const items = recognize(bulkText); if (!items.length) { toast('没有识别到款号或名字'); return; } buildBulkRows(items); render(false); };
+    $('#bkTarget').onchange = (e) => { bulkTarget = e.target.value; cur.a = bulkTarget; if (bulkRows) buildBulkRows(bulkRows); render(false); };
+    $('#bkFile').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      if (!window.XLSX) { toast('表格读取组件还没加载完，请稍等再试'); return; }
+      try {
+        const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+        let raw = [];
+        wb.SheetNames.forEach((n) => { if (!raw.length) raw = parseDocRows(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' })); });
+        if (!raw.length) throw new Error('没找到款号');
+        bulkText = raw.map((x) => `${x.code}${x.size ? ' ' + x.size + '码' : ''} x${x.qty}`).join('\n');
+        buildBulkRows(recognize(bulkText)); render(false);
+      } catch (err) { toast('读取失败：' + err.message); }
+    };
+    const catalog = () => S.products.filter((p) => p.code).map((p) => `${p.code}\t${shortName(p.name)}`).join('\n');
+    const askClaude = async (prompt, images) => {
+      bulkBusy = images ? 'Claude 正在看照片…（可能需要半分钟）' : 'Claude 正在识别…'; render(false);
+      try {
+        const res = await sampleFn.json(prompt, images ? { images } : { modelTier: 'quick' });
+        return Array.isArray(res) ? res : (res && Array.isArray(res.items) ? res.items : []);
+      } catch (e) {
+        toast(e && e.code === 'not_granted' ? '没有允许使用 Claude' : e && e.code === 'rate_limited' ? 'Claude 太忙了，请稍后再试' : '识别失败，请再试一次或手动输入');
+        return null;
+      } finally { bulkBusy = ''; }
+    };
+    const toText = (arr) => arr.filter((x) => x && x.code).map((x) => `${x.code}${x.size ? ' ' + x.size + '码' : ''}${x.qty ? ' x' + x.qty : ''}`).join('\n');
+    if ($('#bkPhoto')) $('#bkPhoto').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const arr = await askClaude(`This photo was taken in an UGG / Australian Shepherd / Everau shoe store. It may show shoe-box labels, a delivery or return slip, a handwritten list, or shelves.
+Find every product style code in it and how many of each (count boxes/lines; 1 if not stated), plus the size if visible.
+Map each one to a code from this catalogue (code<TAB>name). Codes look like AS2115, EA7100, 15801, AS3049K, UGG1115134. Only use codes from the catalogue; if you are unsure, still give your best guess.
+Reply with only a JSON array like [{"code":"AS2115","qty":3,"size":"38"}].
+
+CATALOGUE:
+${catalog()}`, [f]);
+      if (arr === null) { render(false); return; }
+      if (!arr.length) { toast('照片里没有找到款号'); render(false); return; }
+      bulkText = [bulkText, toText(arr)].filter(Boolean).join('\n');
+      buildBulkRows(recognize(bulkText)); toast(`Claude 识别出 ${arr.length} 款`); render(false);
+    };
+    if ($('#bkAsk')) $('#bkAsk').onclick = async () => {
+      const lines = unknown.map((r) => r.raw);
+      const arr = await askClaude(`A shoe-store worker typed these lines meaning product styles (they may be misspelled codes, nicknames, Chinese or English names):
+${lines.map((l, i) => `${i + 1}. ${l}`).join('\n')}
+
+Map each line to one code from this catalogue (code<TAB>name), or null if nothing fits. Keep any quantity/size you can read.
+Reply with only a JSON array, one object per line in order: [{"line":1,"code":"AS2115","qty":2,"size":"38"}].
+
+CATALOGUE:
+${catalog()}`);
+      if (arr === null) { render(false); return; }
+      const fixed = arr.filter((x) => x && x.code && P[resolveCode(x.code)]);
+      bulkRows = bulkRows.filter((r) => r.code);
+      buildBulkRows(bulkRows.concat(recognize(toText(fixed))));
+      toast(`Claude 认出了 ${fixed.length} / ${lines.length} 条`); render(false);
+    };
+    if (!rows.length) return;
+    $$('[data-bon]').forEach((c) => c.onchange = () => { bulkRows[c.dataset.bon].on = c.checked; render(false); });
+    $$('[data-bqty]').forEach((c) => c.onchange = () => { bulkRows[c.dataset.bqty].qty = parseInt(c.value, 10) || null; });
+    $$('[data-btgt]').forEach((c) => c.onchange = () => { const r = bulkRows[c.dataset.btgt]; r.target = c.value; r.why = '手动选择'; r.keep = (codeLocs[r.code] || []).includes(c.value); r.on = !r.keep; render(false); });
+    $$('[data-bcode]').forEach((c) => c.onchange = () => { const r = bulkRows[c.dataset.bcode]; r.code = c.value; buildBulkRows(bulkRows); render(false); });
+    $$('[data-bfix]').forEach((c) => c.onchange = () => {
+      const m = matchCodeToken(c.value) || matchName(c.value);
+      if (!m) { toast('还是认不出，请检查款号'); return; }
+      const r = bulkRows[c.dataset.bfix]; Object.assign(r, { code: m.code, options: m.options, how: '手动输入' });
+      buildBulkRows(bulkRows); render(false);
+    });
+    $('#bkStock').onchange = (e) => { bulkAddStock = e.target.checked; };
+    $('#bkClear').onclick = () => { bulkRows = null; bulkText = ''; render(false); };
+    $('#bkApply').onclick = async () => {
+      if (!await ensureStaff()) return;
+      const todo = bulkRows.filter((r) => r.on && r.code && r.target);
+      let placed = 0;
+      todo.forEach((r) => {
+        if (!(codeLocs[r.code] || []).includes(r.target)) {
+          const d = locById[r.target];
+          d.items.push({ code: r.code, note: r.size ? r.size + '码' : '' });
+          putLoc(d); placed++;
+          addLog('add', { code: r.code, to: d.id, toLabel: locLabel(d), note: '批量上架' });
+          rebuildIndex();
+        }
+      });
+      if (bulkAddStock) {
+        const lines = todo.filter((r) => r.qty > 0).map((r) => ({ code: r.code, qty: r.qty, delta: r.qty, size: r.size || '' }));
+        if (lines.length) applyMove('arrival', lines, '批量上架', '');
+      }
+      const codes = todo.map((r) => r.code);
+      bulkRows = null; bulkText = '';
+      toast(`已上架 ${placed} 款${bulkAddStock ? '，库存已更新' : ''}`);
+      batchText = codes.join(' '); lsSet('ugg-batch', batchText);
+      searchMode = 'batch'; location.hash = '#search'; stack.length = 0; cur = { n: 'search', a: '', p: {} }; render(true);
+    };
+  }
+
   // ---------------------------------------------------------------- boot
   function renderStaff() {
     const c = $('#staffChip');
@@ -2124,6 +2395,12 @@
     } else {
       db = await window.claude.use('db');
       claude.use('downloads').then((d) => { downloads = d; }).catch(() => {});
+      claude.use('sample').then(async (fn) => {
+        if (!fn) return;
+        sampleFn = fn;
+        try { const lim = await fn.limits(); sampleImages = !!(lim && lim.images); } catch (e) { sampleImages = false; }
+        if (cur.n === 'bulk') render(false);
+      }).catch(() => {});
       claude.use('user').then(async (u) => {
         if (!u) return;
         try { const can = await u.can('data.write'); if (can === false) { S.readOnly = true; render(false); } } catch (e) { /* not told */ }
