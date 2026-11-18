@@ -255,7 +255,7 @@
   const putLoc = (l) => write('locations/' + l.id, () => db.doc('locations/' + l.id).set(strip(l)));
   const delLoc = (id) => write('locations/' + id, () => db.doc('locations/' + id).delete());
   const putMeta = () => write('meta/main', () => db.doc('meta/main').set({ unitNames: S.unitNames, lowStock: S.lowStock, vendImportedAt: S.vendImportedAt, cap: S.cap }));
-  const putLayout = () => write('meta/layout', () => db.doc('meta/layout').set({ storeroom: S.layout.storeroom || {}, store: S.layout.store || {}, labels: S.layout.labels || null }));
+  const putLayout = () => write('meta/layout', () => db.doc('meta/layout').set({ storeroom: S.layout.storeroom || {}, store: S.layout.store || {}, labels: S.layout.labels || null, room: S.layout.room || null }));
   const putImport = (r) => write('imports/' + r.id, () => db.doc('imports/' + r.id).set(strip(r)));
   const putProducts = () => write('products/all', () => db.doc('products/all').set({ list: S.products, importedAt: S.vendImportedAt }));
   const putReturn = (r) => write('returns/' + r.id, () => db.doc('returns/' + r.id).set(strip(r)));
@@ -1810,10 +1810,23 @@
       ${mapEditing ? `<rect data-handle="1" x="${w - 22}" y="${h - 22}" width="22" height="22" fill="#b5762f"/>` : ''}
     </g>`;
   }
+  // the map (room walls) size: set by the user, or just big enough for what is on it
+  function contentExtent(area) {
+    let x = 0, y = 0;
+    Object.values(layoutFor(area)).forEach(([bx, by, w, h]) => { x = Math.max(x, bx + w); y = Math.max(y, by + h); });
+    labelsFor(area).forEach((l) => { x = Math.max(x, l.x + String(l.t).length * (l.s || 26) * 0.7); y = Math.max(y, l.y + 10); });
+    return [Math.round(x + 30), Math.round(y + 30)];
+  }
+  function roomSize(area) {
+    const src = editLayout ? editLayout.room : S.layout.room;
+    const r = src && src[area];
+    return r ? r.slice() : contentExtent(area);
+  }
   function mapSVG(area, hiSet) {
     const lay = layoutFor(area), labels = labelsFor(area);
     const est = estimate();
-    let maxX = area === 'store' ? 1160 : 1420, maxY = area === 'store' ? 790 : 1060;
+    const [rw, rh] = roomSize(area);
+    let maxX = rw, maxY = rh;
     Object.values(lay).forEach(([x, y, w, h]) => { maxX = Math.max(maxX, x + w + 20); maxY = Math.max(maxY, y + h + 20); });
     labels.forEach((l) => { maxX = Math.max(maxX, l.x + 200); maxY = Math.max(maxY, l.y + 20); });
     const blocks = Object.entries(lay).map(([u, box]) => area === 'storeroom' ? shelfBlock(u, box, hiSet, est) : storeBlock(u, box, hiSet)).join('');
@@ -1823,7 +1836,8 @@
     }).join('');
     const zm = zoomMode(area);
     return `<svg class="mapsvg ${area} ${mapEditing ? 'editing' : ''}" data-area="${area}" viewBox="0 0 ${maxX} ${maxY}" style="width:${zm === 'fit' ? 100 : zm * 100}%" xmlns="http://www.w3.org/2000/svg">
-      <rect x="2" y="2" width="${maxX - 4}" height="${maxY - 4}" fill="#fbf8f4" stroke="#2b2118" stroke-width="5" rx="8"/>${blocks}${labs}</svg>`;
+      <rect x="2" y="2" width="${rw - 4}" height="${rh - 4}" fill="#fbf8f4" stroke="#2b2118" stroke-width="5" rx="8"/>${blocks}${labs}
+      ${mapEditing ? `<g data-roomhandle="1" transform="translate(${rw - 44},${rh - 44})" style="cursor:nwse-resize"><rect width="42" height="42" rx="6" fill="#2b2118"/><path d="M12 30 L30 12 M20 32 L32 20" stroke="#fff" stroke-width="4" stroke-linecap="round"/></g>` : ''}</svg>`;
   }
   // zoom: 100% = map fits the screen width; stored per map on this device
   function zoomMode(area) {
@@ -1925,6 +1939,11 @@
       svg.addEventListener('pointerdown', (e) => {
         const p = pt(e);
         const lab = e.target.closest('[data-label]');
+        if (e.target.closest('[data-roomhandle]')) {
+          editLayout.room[area] = roomSize(area);
+          drag = { kind: 'room', room: editLayout.room[area], g: e.target.closest('[data-roomhandle]'), wall: $('rect', svg) };
+          svg.setPointerCapture(e.pointerId); e.preventDefault(); return;
+        }
         if (lab) {
           const l = editLayout.labels[area].find((x) => x.id === lab.dataset.label);
           drag = { kind: 'label', l, g: lab, dx: p.x - l.x, dy: p.y - l.y };
@@ -1942,11 +1961,18 @@
       svg.addEventListener('pointermove', (e) => {
         if (!drag) return;
         const p = pt(e), snap = (v) => Math.round(v / 5) * 5;
+        if (drag.kind === 'room') {
+          drag.room[0] = Math.max(300, snap(p.x)); drag.room[1] = Math.max(250, snap(p.y));
+          drag.wall.setAttribute('width', drag.room[0] - 4); drag.wall.setAttribute('height', drag.room[1] - 4);
+          drag.g.setAttribute('transform', `translate(${drag.room[0] - 44},${drag.room[1] - 44})`);
+          if ($('#roomW')) { $('#roomW').value = drag.room[0]; $('#roomH').value = drag.room[1]; }
+          return;
+        }
         if (drag.kind === 'label') { drag.l.x = snap(p.x - drag.dx); drag.l.y = snap(p.y - drag.dy); drag.g.setAttribute('transform', `translate(${drag.l.x},${drag.l.y})`); }
         else if (drag.kind === 'move') { drag.box[0] = snap(p.x - drag.dx); drag.box[1] = snap(p.y - drag.dy); drag.g.setAttribute('transform', `translate(${drag.box[0]},${drag.box[1]})`); }
         else { drag.box[2] = Math.max(80, snap(p.x - drag.x0)); drag.box[3] = Math.max(70, snap(p.y - drag.y0)); const r = $('rect', drag.g); r.setAttribute('width', drag.box[2]); r.setAttribute('height', drag.box[3]); }
       });
-      const end = () => { if (drag) { const k = drag.kind; drag = null; if (k === 'resize') render(false); } };
+      const end = () => { if (drag) { const k = drag.kind; drag = null; if (k === 'resize' || k === 'room') render(false); } };
       svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
     });
   }
@@ -2066,6 +2092,14 @@
             <button class="btn small labonly" id="labBig">A+</button><button class="btn small labonly" id="labSmall">A−</button>
             <button class="btn small labonly danger" id="labDel">删除文字</button>
           </div>
+          <div class="row" style="align-items:flex-end">
+            <b class="small" style="align-self:center">地图大小</b>
+            <label class="field" style="width:86px">宽<input id="roomW" type="number" min="300" value="${roomSize(mapTab)[0]}"></label>
+            <label class="field" style="width:86px">高<input id="roomH" type="number" min="250" value="${roomSize(mapTab)[1]}"></label>
+            <button class="btn small" id="scaleUp">全部放大 ＋10%</button><button class="btn small" id="scaleDown">全部缩小 －10%</button>
+            <button class="btn small" id="roomFit">贴合内容</button>
+          </div>
+          <div class="small muted">也可以拖地图右下角的黑色手柄改大小。「全部放大 / 缩小」会把货架、文字和地图一起按比例缩放。</div>
           <div class="row"><button class="btn small" id="addBlk">${mapTab === 'storeroom' ? '＋ 新增货架' : '＋ 新增展位'}</button><button class="btn small" id="addLab">＋ 加文字</button><button class="btn small" id="resetLay">恢复默认</button>
             <button class="btn small" id="cancelLay">取消</button><button class="btn small primary" id="saveLay">完成并保存</button></div></div>` : ''}
         ${mapBox(mapTab, mapSVG(mapTab))}
@@ -2100,6 +2134,19 @@
       $('#labSmall').onclick = () => { const l = lab(); if (l) { l.s = Math.max(12, (l.s || 26) - 4); render(false); } };
       $('#labDel').onclick = () => { const l = lab(); if (l) { editLayout.labels[mapTab] = editLayout.labels[mapTab].filter((x) => x !== l); selected = null; render(false); } };
       $('#addBlk').onclick = () => (mapTab === 'storeroom' ? addShelf() : addDisplay());
+      const setRoom = (w, h) => { editLayout.room[mapTab] = [Math.max(300, Math.round(w)), Math.max(250, Math.round(h))]; render(false); };
+      $('#roomW').onchange = () => { const r = roomSize(mapTab); setRoom(parseInt($('#roomW').value, 10) || r[0], r[1]); };
+      $('#roomH').onchange = () => { const r = roomSize(mapTab); setRoom(r[0], parseInt($('#roomH').value, 10) || r[1]); };
+      $('#roomFit').onclick = () => { delete editLayout.room[mapTab]; editLayout.room[mapTab] = contentExtent(mapTab); render(false); };
+      const scaleAll = (f) => {
+        const r = roomSize(mapTab);
+        Object.values(editLayout[mapTab]).forEach((b) => { for (let i = 0; i < 4; i++) b[i] = Math.round(b[i] * f); });
+        editLayout.labels[mapTab].forEach((l) => { l.x = Math.round(l.x * f); l.y = Math.round(l.y * f); l.s = Math.max(10, Math.round((l.s || 26) * f)); });
+        editLayout.room[mapTab] = [Math.round(r[0] * f), Math.round(r[1] * f)];
+        render(false);
+      };
+      $('#scaleUp').onclick = () => scaleAll(1.1);
+      $('#scaleDown').onclick = () => scaleAll(1 / 1.1);
       $('#blkDel').onclick = () => { if (box()) deleteBlock(mapTab, selected.id); };
       $('#colAdd').onclick = () => { if (box()) resizeShelf(selected.id, 'col', 1); };
       $('#colDel').onclick = () => { if (box()) resizeShelf(selected.id, 'col', -1); };
@@ -2113,13 +2160,13 @@
       };
       $('#resetLay').onclick = async () => {
         if (!await confirmDlg('恢复成默认布局？（保存后才生效）', '恢复')) return;
-        editLayout[mapTab] = {}; editLayout.labels[mapTab] = DEFAULT_LABELS[mapTab].map((x) => Object.assign({}, x));
+        editLayout[mapTab] = {}; editLayout.labels[mapTab] = DEFAULT_LABELS[mapTab].map((x) => Object.assign({}, x)); delete editLayout.room[mapTab];
         const saved = S.layout[mapTab]; S.layout[mapTab] = {}; editLayout[mapTab] = layoutFor(mapTab); S.layout[mapTab] = saved;
         selected = null; render(false);
       };
       $('#cancelLay').onclick = () => { mapEditing = false; editLayout = null; selected = null; render(false); };
       $('#saveLay').onclick = () => {
-        S.layout = { storeroom: editLayout.storeroom, store: editLayout.store, labels: editLayout.labels };
+        S.layout = { storeroom: editLayout.storeroom, store: editLayout.store, labels: editLayout.labels, room: editLayout.room };
         mapEditing = false; editLayout = null; selected = null;
         putLayout(); addLog('layout', { area: mapTab === 'store' ? '店面地图' : '仓库地图' });
         toast('地图已保存'); render(false);
@@ -2128,7 +2175,7 @@
     }
     if ($('#editLay')) $('#editLay').onclick = async () => {
       if (!await ensureStaff()) return;
-      editLayout = { storeroom: layoutFor('storeroom'), store: layoutFor('store'), labels: { storeroom: labelsFor('storeroom'), store: labelsFor('store') } };
+      editLayout = { storeroom: layoutFor('storeroom'), store: layoutFor('store'), labels: { storeroom: labelsFor('storeroom'), store: labelsFor('store') }, room: Object.assign({}, S.layout.room || {}) };
       mapEditing = true; selected = null; render(false);
     };
     $('#newLoc').onclick = newLocation;
@@ -2470,7 +2517,7 @@ ${catalog()}`);
     });
     subscribe(db.doc('meta/layout'), (snap) => {
       const d = snap.exists ? JSON.parse(JSON.stringify(snap.data())) : {};
-      S.layout = { storeroom: d.storeroom || {}, store: d.store || {}, labels: d.labels || null };
+      S.layout = { storeroom: d.storeroom || {}, store: d.store || {}, labels: d.labels || null, room: d.room || null };
     });
     subscribe(db.collection('laybys').orderBy('createdAt', 'desc').limit(300), (snap) => {
       S.laybys = snap.docs.map((d) => Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data()))));

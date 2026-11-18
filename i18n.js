@@ -669,5 +669,12 @@ window.I18N_EN = {
 "认出了": "recognised",
 "识别": "Recognise",
 "童": "kids",
-"男": "men"
+"男": "men",
+"也可以拖地图右下角的黑色手柄改大小。「全部放大 / 缩小」会把货架、文字和地图一起按比例缩放。": "You can also drag the black handle in the map's bottom-right corner. \"Enlarge all / Shrink all\" scales shelves, text and the map together.",
+"全部放大 ＋10%": "Enlarge all +10%",
+"全部缩小 －10%": "Shrink all −10%",
+"贴合内容": "Fit to content",
+"地图大小": "Map size",
+"全部放大": "Enlarge all",
+"全部缩小": "Shrink all"
 };
