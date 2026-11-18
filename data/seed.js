@@ -4938,10 +4938,12 @@ window.SEED_DATA = {
     "15902"
    ],
    "xlD": 1,
-   "xlH": 5
+   "xlH": 5,
+   "bay": 33.9,
+   "calPct": 95
   },
   "lowStock": 3,
   "unitNames": {}
  },
- "version": "2026-11-18-map1"
+ "version": "2026-11-18-cap1"
 };

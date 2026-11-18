@@ -190,6 +190,7 @@
       const untouchedLayout = !store['meta/layout'] || JSON.stringify(store['meta/layout']) === prev.layout;
       const neverEdited = !Object.keys(store).some((k) => k.startsWith('log/'));
       if (seed.layout && untouchedLayout) store['meta/layout'] = seed.layout;
+      if (seed.meta && seed.meta.cap && store['meta/main'] && !(store['meta/main'].cap || {}).bay) store['meta/main'] = Object.assign({}, store['meta/main'], { cap: Object.assign({}, store['meta/main'].cap || {}, { bay: seed.meta.cap.bay, calPct: seed.meta.cap.calPct }) });
       if (neverEdited) {
         seedLocations(store);
         if (seed.meta) store['meta/main'] = Object.assign({}, store['meta/main'] || {}, { cap: seed.meta.cap, unitNames: Object.assign({}, seed.meta.unitNames, (store['meta/main'] || {}).unitNames) });
@@ -1096,10 +1097,30 @@
   const isShoe = (code) => boxFactor(code) >= 0.5;
   // cap.mode 'cell': every grid cell is one shelf bay of h×l×d boxes (merged cells count per bay they span).
   // cap.mode 'shelf': the whole shelving unit holds h×l×d boxes, split across its cells by area.
-  const boxUnit = () => S.cap.h * S.cap.l * S.cap.d;
-  const cellCap = (l) => S.cap.mode === 'shelf' ? boxUnit() * ((l.colspan || 1) / (l.cols || 1)) * ((l.rowspan || 1) / (l.rows || 1)) : boxUnit() * (l.colspan || 1) * (l.rowspan || 1);
-  const shelfCapOf = (u) => S.cap.mode === 'shelf' ? boxUnit() : S.locations.filter((l) => l.unit === u && l.area === 'storeroom').reduce((a, l) => a + cellCap(l), 0);
-  const capText = () => `${S.cap.mode === 'shelf' ? '每个货架' : '每一格'}按 ${S.cap.h} 高 × ${S.cap.l} 长 × ${S.cap.d} 宽 = ${boxUnit()} 个大鞋盒`;
+  const boxUnit = () => S.cap.h * S.cap.l * S.cap.d;              // theoretical boxes per bay (used for the XL ratio)
+  const bayCap = () => S.cap.bay > 0 ? S.cap.bay : boxUnit();      // calibrated real capacity per bay, if set
+  const cellCap = (l) => S.cap.mode === 'shelf' ? bayCap() * ((l.colspan || 1) / (l.cols || 1)) * ((l.rowspan || 1) / (l.rows || 1)) : bayCap() * (l.colspan || 1) * (l.rowspan || 1);
+  const shelfCapOf = (u) => S.cap.mode === 'shelf' ? bayCap() : S.locations.filter((l) => l.unit === u && l.area === 'storeroom').reduce((a, l) => a + cellCap(l), 0);
+  const capText = () => S.cap.bay > 0
+    ? `${S.cap.mode === 'shelf' ? '每个货架' : '每一格'}按校准后的约 ${Math.round(S.cap.bay)} 盒计算（以“所有库存放进仓库≈${S.cap.calPct || 95}% 满”校准）`
+    : `${S.cap.mode === 'shelf' ? '每个货架' : '每一格'}按 ${S.cap.h} 高 × ${S.cap.l} 长 × ${S.cap.d} 宽 = ${boxUnit()} 个大鞋盒`;
+  // everything that is physically in the storeroom, in big-box units: located styles + styles with no location yet
+  function storeroomTotals() {
+    const est = estimate();
+    const located = Object.values(est.shelf).reduce((a, v) => a + v, 0);
+    let unlocated = 0;
+    // styles with no storeroom bay (none at all, or only on store displays): their backstock is still in the storeroom
+    S.products.forEach((p) => {
+      if (!p.code || p.qty <= 0) return;
+      const ids = codeLocs[p.code] || [];
+      if (ids.some((id) => locById[id] && locById[id].area === 'storeroom')) return;
+      unlocated += Math.max(0, p.qty - ids.length * S.cap.display) * boxFactor(p.code);
+    });
+    const bays = S.locations.filter((l) => l.area === 'storeroom').reduce((a, l) => a + (S.cap.mode === 'shelf' ? 0 : (l.colspan || 1) * (l.rowspan || 1)), 0) || 1;
+    const units = roomUnits().length || 1;
+    const capacity = roomUnits().reduce((a, u) => a + shelfCapOf(u), 0);
+    return { located, unlocated, total: located + unlocated, bays: S.cap.mode === 'shelf' ? units : bays, capacity };
+  }
   const roomUnits = () => [...new Set(S.locations.filter((l) => l.area === 'storeroom').map((l) => l.unit))];
   function estimate() {
     const cell = {}, shelf = {}, items = {};
@@ -1262,9 +1283,13 @@
     };
     view(`${backLink()}
       <h1>💡 整理建议</h1>
+      ${(() => { const t = storeroomTotals(); const pct = t.total / t.capacity; return `<div class="card">
+        <div class="row between"><b>仓库总量</b><span class="pill ${fillClass(pct)}">${Math.round(pct * 100)}%</span></div>
+        <div class="progress"><div style="width:${Math.min(100, pct * 100)}%;background:${pct > 1 ? 'var(--bad)' : pct >= .75 ? 'var(--warn)' : 'var(--ok)'}"></div></div>
+        <div class="small">约 <b>${Math.round(t.total)}</b> / ${Math.round(t.capacity)} 盒：已登记货位的约 ${Math.round(t.located)} 盒 + 还没登记货位的约 ${Math.round(t.unlocated)} 盒（在仓库里，但不知道在哪一格）</div></div>`; })()}
       <div class="card">
         <b>货架容量</b> <span class="small muted">（${capText()}）</span>
-        ${units.map((u) => { const v = est.shelf[u] || 0, cap = capOf[u]; return `<div style="margin-top:8px"><div class="row between small"><a ${goAttr('shelf', u)}><b>${esc(unitName(u))}</b></a><span>约 ${Math.round(v)} / ${cap} 盒 · ${Math.round(v / cap * 100)}%</span></div><div class="progress"><div style="width:${Math.min(100, v / cap * 100)}%;background:${v > cap ? 'var(--bad)' : v / cap >= .75 ? 'var(--warn)' : 'var(--ok)'}"></div></div></div>`; }).join('')}
+        ${units.map((u) => { const v = est.shelf[u] || 0, cap = capOf[u]; return `<div style="margin-top:8px"><div class="row between small"><a ${goAttr('shelf', u)}><b>${esc(unitName(u))}</b></a><span>约 ${Math.round(v)} / ${Math.round(cap)} 盒 · ${Math.round(v / cap * 100)}%</span></div><div class="progress"><div style="width:${Math.min(100, v / cap * 100)}%;background:${v > cap ? 'var(--bad)' : v / cap >= .75 ? 'var(--warn)' : 'var(--ok)'}"></div></div></div>`; }).join('')}
         <div class="small muted" style="margin-top:8px">估算方法：Vend 库存 − 店面每个展位 ${S.cap.display} 件，剩下的平均分到这个款在仓库的格子里；童鞋按 0.5 盒、配饰按 0.3 盒算；特大鞋盒（${esc((S.cap.xl || []).join('/'))}）每格只能放 ${S.cap.xlH} 高 × ${S.cap.xlD} 宽，按 ${(boxUnit() / (S.cap.xlH * S.cap.l * S.cap.xlD)).toFixed(1)} 盒算。只是估计，实际以清点为准。</div>
       </div>
       ${section('over', '🔴 超出容量的货架', '按占用最多的款优先移到最空的货架。')}
@@ -1285,6 +1310,10 @@
           <label class="field grow">特大鞋盒款号（逗号分开）<input id="capX" type="text" value="${esc((S.cap.xl || []).join(', '))}"></label>
           <label class="field" style="width:90px">特大·高<input id="capXH" type="number" min="1" value="${S.cap.xlH}"></label>
           <label class="field" style="width:90px">特大·宽<input id="capXD" type="number" min="1" value="${S.cap.xlD}"></label></div>
+        <div class="card" style="margin-top:10px;background:var(--accent-soft)"><b>按实际情况校准容量</b>
+          <div class="small" style="margin:4px 0">如果“所有库存都放进仓库时”仓库大约是几成满，填进来，系统会反推每一格实际能放多少盒。现在：${S.cap.bay > 0 ? `已校准，每格约 ${Math.round(S.cap.bay)} 盒` : `没校准，每格按理论值 ${boxUnit()} 盒`}。</div>
+          <div class="row"><label class="field" style="width:130px">放满程度 %<input id="calPct" type="number" min="30" max="120" value="${S.cap.calPct || 95}"></label>
+            <button class="btn small primary" id="calGo">按这个校准</button>${S.cap.bay > 0 ? '<button class="btn small" id="calOff">取消校准（用理论值）</button>' : ''}</div></div>
         <label class="field" style="margin-top:8px;width:200px">每天建议清点几款<input id="capDaily" type="number" min="1" max="20" value="${S.cap.daily || 8}"></label>
         <label class="field" style="margin-top:8px">这个尺寸是指
           <select id="capM"><option value="cell" ${S.cap.mode !== 'shelf' ? 'selected' : ''}>每一格（表格里的一个格子）</option><option value="shelf" ${S.cap.mode === 'shelf' ? 'selected' : ''}>整个货架（一整张表格）</option></select></label><button class="btn small primary" id="capSave" style="margin-top:8px">保存</button></details>`);
@@ -1298,8 +1327,22 @@
       if (!await ensureStaff()) return;
       const g = (id, d) => Math.max(0, parseInt($(id).value, 10) || d);
       S.cap = { h: g('#capH', 6) || 6, l: g('#capL', 7) || 7, d: g('#capD', 2) || 2, display: g('#capS', 2), mode: $('#capM').value,
-        xl: $('#capX').value.split(/[\s,，]+/).map(norm).filter(Boolean), xlH: g('#capXH', 5) || 5, xlD: g('#capXD', 1) || 1, daily: g('#capDaily', 8) || 8 };
+        xl: $('#capX').value.split(/[\s,，]+/).map(norm).filter(Boolean), xlH: g('#capXH', 5) || 5, xlD: g('#capXD', 1) || 1, daily: g('#capDaily', 8) || 8,
+        bay: S.cap.bay || 0, calPct: S.cap.calPct || 95 };
       putMeta(); addLog('capacity', { text: `${S.cap.h}×${S.cap.l}×${S.cap.d}` }); toast('已保存'); render(false);
+    };
+    $('#calGo').onclick = async () => {
+      if (!await ensureStaff()) return;
+      const pct = Math.max(30, Math.min(120, parseInt($('#calPct').value, 10) || 95));
+      const t = storeroomTotals();
+      const per = t.total / (pct / 100) / t.bays;
+      S.cap = Object.assign({}, S.cap, { bay: Math.round(per * 10) / 10, calPct: pct });
+      putMeta(); addLog('capacity', { text: `校准：全部库存≈${pct}% 满 → 每${S.cap.mode === 'shelf' ? '个货架' : '格'}约 ${Math.round(per)} 盒` });
+      toast(`已校准：每${S.cap.mode === 'shelf' ? '个货架' : '格'}约 ${Math.round(per)} 盒`); render(false);
+    };
+    if ($('#calOff')) $('#calOff').onclick = async () => {
+      if (!await ensureStaff()) return;
+      S.cap = Object.assign({}, S.cap, { bay: 0 }); putMeta(); addLog('capacity', { text: '取消校准' }); render(false);
     };
   }
 
