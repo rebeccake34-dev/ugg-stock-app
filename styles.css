@@ -212,3 +212,10 @@ dialog textarea { min-height: 160px; font-size: 13px; }
 .bk-row:first-child { border-top: 0; }
 .bk-row select.code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; padding: 4px 6px; width: auto; max-width: 100%; }
 .bk-row select.small { font-size: 13px; padding: 6px 8px; }
+/* big screens: map pages use the full window width, the map fits the window height */
+body.wide main { max-width: min(1700px, 100%); }
+@media (min-width: 900px) {
+  .map-wrap { max-height: calc(100vh - 170px); }
+  body.wide .edit-bar .row { flex-wrap: wrap; }
+}
+.map-wrap.fitted svg { margin: 0 auto; }

@@ -172,12 +172,29 @@
     const KEY = 'ugg-localdb-v1';
     let store = null;
     try { store = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { store = null; }
+    const seed = window.SEED_DATA || { locations: [], products: [] };
+    const seedLocations = (st) => {
+      Object.keys(st).filter((k) => k.startsWith('locations/')).forEach((k) => delete st[k]);
+      seed.locations.forEach((l, i) => { const c = Object.assign({}, l); delete c.id; if (c.order == null) c.order = i; st['locations/' + l.id] = c; });
+    };
     if (!store) {
       store = {};
-      const seed = window.SEED_DATA || { locations: [], products: [] };
-      seed.locations.forEach((l, i) => { const c = Object.assign({}, l); delete c.id; c.order = i; store['locations/' + l.id] = c; });
+      seedLocations(store);
       store['products/all'] = { list: seed.products, importedAt: seed.generated || '' };
-      store['meta/main'] = { unitNames: {}, lowStock: 3, vendImportedAt: seed.generated || '' };
+      store['meta/main'] = Object.assign({ unitNames: {}, lowStock: 3 }, seed.meta || {}, { vendImportedAt: seed.generated || '' });
+      if (seed.layout) store['meta/layout'] = seed.layout;
+      store.__seed = { version: seed.version || '', layout: JSON.stringify(seed.layout || null) };
+    } else if (seed.version && (!store.__seed || store.__seed.version !== seed.version)) {
+      // a newer default map was published: take it over unless this device has its own changes
+      const prev = store.__seed || {};
+      const untouchedLayout = !store['meta/layout'] || JSON.stringify(store['meta/layout']) === prev.layout;
+      const neverEdited = !Object.keys(store).some((k) => k.startsWith('log/'));
+      if (seed.layout && untouchedLayout) store['meta/layout'] = seed.layout;
+      if (neverEdited) {
+        seedLocations(store);
+        if (seed.meta) store['meta/main'] = Object.assign({}, store['meta/main'] || {}, { cap: seed.meta.cap, unitNames: Object.assign({}, seed.meta.unitNames, (store['meta/main'] || {}).unitNames) });
+      }
+      store.__seed = { version: seed.version, layout: JSON.stringify(seed.layout || null) };
     }
     const subs = new Set();
     const persist = () => {
@@ -320,6 +337,7 @@
     const y = window.scrollY;
     const group = GROUP[cur.n] || cur.n;
     $$('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === group));
+    document.body.classList.toggle('wide', ['map', 'shelf', 'bulk'].includes(cur.n) || (cur.n === 'search' && searchMode === 'batch'));
     (routes[cur.n] || viewSearch)(cur.a, new Map(Object.entries(cur.p || {})));
     window.scrollTo(0, scrollTop ? 0 : y);
   }
@@ -1803,17 +1821,40 @@
       const sel = mapEditing && selected && selected.kind === 'label' && selected.id === l.id;
       return `<g data-label="${esc(l.id)}" transform="translate(${l.x},${l.y})"><text font-size="${l.s || 26}" font-weight="700" fill="#2b2118" ${sel ? 'style="text-decoration:underline"' : ''}>${esc(l.t)}</text></g>`;
     }).join('');
-    return `<svg class="mapsvg ${area} ${mapEditing ? 'editing' : ''}" data-area="${area}" viewBox="0 0 ${maxX} ${maxY}" style="width:${getZoom(area) * 100}%" xmlns="http://www.w3.org/2000/svg">
+    const zm = zoomMode(area);
+    return `<svg class="mapsvg ${area} ${mapEditing ? 'editing' : ''}" data-area="${area}" viewBox="0 0 ${maxX} ${maxY}" style="width:${zm === 'fit' ? 100 : zm * 100}%" xmlns="http://www.w3.org/2000/svg">
       <rect x="2" y="2" width="${maxX - 4}" height="${maxY - 4}" fill="#fbf8f4" stroke="#2b2118" stroke-width="5" rx="8"/>${blocks}${labs}</svg>`;
   }
   // zoom: 100% = map fits the screen width; stored per map on this device
-  function getZoom(area) {
-    const v = parseFloat(lsGet('ugg-zoom-' + area));
-    if (v > 0) return v;
-    return window.innerWidth < 700 ? (area === 'storeroom' ? 2.6 : 2.2) : 1;
+  function zoomMode(area) {
+    const v = lsGet('ugg-zoom-' + area);
+    if (v === 'fit') return 'fit';
+    if (parseFloat(v) > 0) return parseFloat(v);
+    return window.innerWidth < 700 ? (area === 'storeroom' ? 2.6 : 2.2) : 'fit';
   }
-  function setZoom(area, z) { z = Math.max(0.5, Math.min(6, Math.round(z * 100) / 100)); lsSet('ugg-zoom-' + area, String(z)); return z; }
-  const mapBox = (area, svg) => `<div class="zoombar" data-zarea="${area}"><button class="btn small" data-z="out" aria-label="缩小">－</button><span class="zv">${Math.round(getZoom(area) * 100)}%</span><button class="btn small" data-z="in" aria-label="放大">＋</button><button class="btn small" data-z="fit">适合屏幕</button><span class="small muted">（两指捏合也可以缩放）</span></div><div class="map-wrap" data-zarea="${area}">${svg}</div>`;
+  function getZoom(area) {
+    const svg = $(`svg.mapsvg[data-area="${area}"]`);
+    if (svg && svg.style.width) return parseFloat(svg.style.width) / 100;
+    const m = zoomMode(area); return m === 'fit' ? 1 : m;
+  }
+  // biggest width (as a share of the box) at which the whole map fits on screen, never wider than the box
+  function fitZoom(wrap) {
+    const svg = $('svg', wrap); if (!svg) return 1;
+    const vb = svg.viewBox.baseVal, aspect = vb.height / vb.width;
+    const top = wrap.getBoundingClientRect().top + window.scrollY;
+    const tabbar = ($('.tabbar') || {}).offsetHeight || 60;
+    const avail = Math.max(320, window.innerHeight - Math.min(top, 260) - tabbar - 24);
+    return Math.min(1, avail / (wrap.clientWidth * aspect));
+  }
+  function applyFit(wrap, area) {
+    const z = fitZoom(wrap), svg = $('svg', wrap);
+    svg.style.width = (z * 100) + '%';
+    wrap.classList.add('fitted');
+    $$(`.zoombar[data-zarea="${area}"] .zv`).forEach((e) => { e.textContent = Math.round(z * 100) + '%'; });
+  }
+  window.addEventListener('resize', () => { $$('.map-wrap.fitted').forEach((w) => applyFit(w, w.dataset.zarea)); });
+  function setZoom(area, z) { z = Math.max(0.3, Math.min(6, Math.round(z * 100) / 100)); lsSet('ugg-zoom-' + area, String(z)); return z; }
+  const mapBox = (area, svg) => `<div class="zoombar" data-zarea="${area}"><button class="btn small" data-z="out" aria-label="缩小">－</button><span class="zv">${zoomMode(area) === 'fit' ? '100%' : Math.round(zoomMode(area) * 100) + '%'}</span><button class="btn small" data-z="in" aria-label="放大">＋</button><button class="btn small" data-z="fit">适合屏幕</button><span class="small muted">（两指捏合也可以缩放）</span></div><div class="map-wrap" data-zarea="${area}">${svg}</div>`;
   function applyZoom(wrap, area, z, cx) {
     const svg = $('svg', wrap); if (!svg) return;
     const old = getZoom(area); z = setZoom(area, z);
@@ -1821,6 +1862,7 @@
     const ratio = (wrap.scrollLeft + focus) / (svg.clientWidth || 1);
     const vy = (wrap.scrollTop + wrap.clientHeight / 2) / (svg.clientHeight || 1);
     svg.style.width = (z * 100) + '%';
+    wrap.classList.remove('fitted');
     wrap.scrollLeft = ratio * svg.clientWidth - focus;
     wrap.scrollTop = vy * svg.clientHeight - wrap.clientHeight / 2;
     $$(`.zoombar[data-zarea="${area}"] .zv`).forEach((e) => { e.textContent = Math.round(z * 100) + '%'; });
@@ -1831,8 +1873,10 @@
       const area = bar.dataset.zarea, wrap = bar.nextElementSibling;
       $$('[data-z]', bar).forEach((b) => b.onclick = () => {
         const z = getZoom(area);
-        applyZoom(wrap, area, b.dataset.z === 'in' ? z * 1.25 : b.dataset.z === 'out' ? z / 1.25 : 1);
+        if (b.dataset.z === 'fit') { lsSet('ugg-zoom-' + area, 'fit'); applyFit(wrap, area); return; }
+        applyZoom(wrap, area, b.dataset.z === 'in' ? z * 1.25 : z / 1.25);
       });
+      if (zoomMode(area) === 'fit') applyFit(wrap, area);
       // pinch with two fingers, or ctrl + mouse wheel / trackpad pinch
       let pinch = null;
       const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
