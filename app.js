@@ -1508,7 +1508,7 @@
   const QTY_HDR = /(qty|quantity|数量|件数|units|received|ordered|order qty|count|pairs|双数|退货数|到货数|订货数)/i;
   const NAME_HDR = /^(product|name|description|item|品名|名称|商品名称|产品)$/i;
   const SIZE_HDR = /(size|尺码|码数)/i;
-  const looksLikeCode = (v) => { const c = norm(v); return !!c && (P[resolveCode(c)] !== undefined || /^[A-Z_]{0,6}\d{3,7}[A-Z]?$/.test(c)); };
+  const looksLikeCode = (v) => { const c = norm(v); return !!c && (P[resolveCode(c)] !== undefined || /^[A-Z_]{0,12}\d{3,7}[A-Z]?$/.test(c)); };
   function parseDocRows(rows) {
     let h = -1, cols = {};
     for (let i = 0; i < Math.min(rows.length, 20); i++) {
