@@ -751,5 +751,9 @@ window.I18N_EN = {
 "每": "each",
 "满": "full",
 "点": "tap",
-"张": ""
+"张": "",
+"输入今天要清点的款号（6–8 款），每行一个或用空格分开": "Enter today's styles to count (6–8), one per line or separated by spaces",
+"例如：AS2115 EA7100 15801": "e.g. AS2115 EA7100 15801",
+"请先输入要清点的款号": "Enter the styles to count first",
+"你有一个没完成的清点，要换成这次输入的款吗？": "You have an unfinished count. Replace it with these styles?"
 };

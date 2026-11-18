@@ -1791,7 +1791,6 @@
     const arrivals = arrivalsOn(date);
     const arrivedCodes = [...new Set(arrivals.flatMap((r) => r.lines.map((x) => x.code)))];
     const lyWaiting = S.laybys.filter((l) => l.status === 'waiting' && (arrivedCodes.includes(l.code) || laybyReady(l)));
-    const sugg = suggestDailyCount();
     const isToday = date === today();
     view(`<div class="row between"><button class="btn small" id="dPrev">‹</button>
         <div style="text-align:center"><b style="font-size:18px">${esc(date)} ${WEEK[wd]}</b>${isToday ? '<div class="small muted">今天</div>' : `<div><button class="linkish" id="dToday">回到今天</button></div>`}</div>
@@ -1810,7 +1809,8 @@
               <div class="small muted">${d ? esc(d.by) + ' · ' + esc(fmtTime(d.at).slice(11)) : auto ? '已自动完成' : ''}${t.days ? ` · <span class="pill grey">${t.days.map((x) => WEEK[x]).join('/')}</span>` : ''}</div>
               ${t.photo ? `<div class="thumbs">${photos.map((p) => `<img src="${p.data}" data-ph="${esc(p.id)}" alt="">`).join('')}
                 <label class="btn small">📷 拍照<input type="file" accept="image/*" capture="environment" data-up="${t.id}" hidden></label></div>` : ''}
-              ${t.id === 'count' && !auto ? `<div class="small" style="margin-top:4px">今天建议清点：${sugg.map((c) => `<span class="code">${esc(c)}</span>`).join(' ')}</div><button class="btn small primary" id="dCount" style="margin-top:4px">开始清点这 ${sugg.length} 款</button>` : ''}
+              ${t.id === 'count' && !auto ? `<div class="stack" style="margin-top:6px"><textarea id="dCountIn" rows="3" placeholder="输入今天要清点的款号（6–8 款），每行一个或用空格分开&#10;例如：AS2115 EA7100 15801" autocapitalize="characters">${esc(lsGet('ugg-daycount-' + date) || '')}</textarea>
+                <div class="row"><button class="btn small primary" id="dCount">🔎 识别并开始清点</button><span class="small muted" id="dCountMsg"></span></div></div>` : ''}
               ${t.go ? `<a class="btn small" style="margin-top:4px" ${goAttr(...t.go)}>打开 ›</a>` : ''}
               ${t.id === 'layby' && lyWaiting.length ? `<div class="small" style="color:var(--warn);margin-top:4px">有 ${lyWaiting.length} 位客人的货可能到了</div>` : ''}
             </div></div>`;
@@ -1855,12 +1855,17 @@
         S.dayPhotos = S.dayPhotos.filter((p) => p.id !== ph.id); delPhoto(ph.id); render(false);
       }
     });
+    const dci = $('#dCountIn');
+    if (dci) dci.addEventListener('input', () => lsSet('ugg-daycount-' + date, dci.value));
     const dc = $('#dCount');
     if (dc) dc.onclick = async () => {
+      const { codes, unknown } = recognizeForCount(dci.value);
+      if (!codes.length) { $('#dCountMsg').innerHTML = '<span style="color:var(--bad)">请先输入要清点的款号</span>'; return; }
       if (!await ensureStaff()) return;
-      if (S.countDraft && !await confirmDlg('你有一个没完成的清点，要替换成今天建议的款吗？', '替换')) return;
-      S.countDraft = { id: uid(), scope: 'custom', scopeLabel: `每日清点 ${today()}`, startedAt: nowISO(), staff: S.staff, lines: sugg.map((c) => ({ code: c, counted: '' })) };
+      if (S.countDraft && !await confirmDlg('你有一个没完成的清点，要换成这次输入的款吗？', '替换')) return;
+      S.countDraft = { id: uid(), scope: 'custom', scopeLabel: `每日清点 ${today()}`, startedAt: nowISO(), staff: S.staff, lines: codes.map((c) => ({ code: c, counted: '' })) };
       saveDraft(); location.hash = '#count'; stack.length = 0; cur = { n: 'count', a: '', p: {} }; render(true);
+      toast(`已加入 ${codes.length} 款${unknown.length ? `，没认出：${unknown.join(' ')}` : ''}`);
     };
   }
 
