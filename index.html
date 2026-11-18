@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UGG 货位助手</title>
 <meta name="theme-color" content="#2b2118">
-<title>UGG 货位助手 · Stock Finder</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
@@ -12,24 +12,30 @@
 </head>
 <body>
 <header class="topbar">
-  <a href="#/search" class="brand">UGG 货位助手</a>
-  <button id="staffChip" class="staff-chip" type="button" title="当前操作人">未设置姓名</button>
+  <a href="#today" class="brand">UGG 货位助手</a>
+  <div class="row" style="gap:4px"><span id="sync" class="sync"></span><button id="langBtn" class="staff-chip" type="button">EN</button><button id="staffChip" class="staff-chip" type="button" title="当前操作人">未设置姓名</button></div>
 </header>
 
-<main id="view" aria-live="polite"></main>
+<main id="view" aria-live="polite"><div class="loading">正在加载货位数据…</div></main>
 
 <nav class="tabbar">
-  <a href="#/search" data-tab="search"><span class="ico">🔍</span>查找</a>
-  <a href="#/map" data-tab="map"><span class="ico">🗺️</span>货位</a>
-  <a href="#/count" data-tab="count"><span class="ico">✅</span>清点</a>
-  <a href="#/returns" data-tab="returns"><span class="ico">📦</span>退库</a>
-  <a href="#/more" data-tab="more"><span class="ico">☰</span>更多</a>
+  <a href="#today" data-tab="today"><span class="ico">📋</span>今日</a>
+  <a href="#search" data-tab="search"><span class="ico">🔍</span>查找</a>
+  <a href="#map" data-tab="map"><span class="ico">🗺️</span>货位</a>
+  <a href="#count" data-tab="count"><span class="ico">✅</span>清点</a>
+  <a href="#stock" data-tab="stock"><span class="ico">📦</span>库存</a>
+  <a href="#more" data-tab="more"><span class="ico">☰</span>更多</a>
 </nav>
 
 <div id="toast" class="toast" role="status"></div>
 
-<script src="data/seed.js"></script>
 <script src="vendor/xlsx.full.min.js" defer></script>
+<script src="data/seed.js"></script>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
+<script>
+  // offline support for the web (GitHub Pages) version
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !window.claude) navigator.serviceWorker.register('sw.js').catch(function () {});
+</script>
 </body>
 </html>
