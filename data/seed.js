@@ -1295,8 +1295,8 @@ window.SEED_DATA = {
 "note": ""
 },
 {
-"code": "5035",
-"note": ""
+"code": "AS5035",
+"note": "Cavero"
 }
 ],
 "order": 58
@@ -1322,8 +1322,8 @@ window.SEED_DATA = {
 "note": "Urban Classic Mini II"
 },
 {
-"code": "5039",
-"note": ""
+"code": "AS5039",
+"note": "Vallon"
 }
 ],
 "order": 59
@@ -2447,8 +2447,8 @@ window.SEED_DATA = {
 "note": ""
 },
 {
-"code": "2115",
-"note": ""
+"code": "AS2115",
+"note": "Tay"
 }
 ],
 "order": 5900
@@ -5161,7 +5161,7 @@ window.SEED_DATA = {
 "unitNames": {},
 "vendImportedAt": "2026-11-18T17:55:00"
 },
-"version": "2026-11-18-vend2",
+"version": "2026-11-18-vend3",
 "locPatch": [
 {
 "id": "R1-3-5",
@@ -5208,8 +5208,8 @@ window.SEED_DATA = {
 "note": ""
 },
 {
-"code": "5035",
-"note": ""
+"code": "AS5035",
+"note": "Cavero"
 }
 ]
 },
@@ -5235,8 +5235,8 @@ window.SEED_DATA = {
 "note": "Urban Classic Mini II"
 },
 {
-"code": "5039",
-"note": ""
+"code": "AS5039",
+"note": "Vallon"
 }
 ]
 },
@@ -5294,8 +5294,8 @@ window.SEED_DATA = {
 "note": ""
 },
 {
-"code": "2115",
-"note": ""
+"code": "AS2115",
+"note": "Tay"
 }
 ]
 },
@@ -5389,6 +5389,131 @@ window.SEED_DATA = {
 ],
 "order": 6040
 }
+},
+{
+"id": "R6-1-2",
+"from": [
+{
+"code": "AS3043",
+"note": "NATALIA"
+},
+{
+"code": "UR12811",
+"note": ""
+},
+{
+"code": "5035",
+"note": ""
+}
+],
+"to": [
+{
+"code": "AS3043",
+"note": "NATALIA"
+},
+{
+"code": "UR12811",
+"note": ""
+},
+{
+"code": "AS5035",
+"note": "Cavero"
+}
+]
+},
+{
+"id": "R6-1-3",
+"from": [
+{
+"code": "AS4003",
+"note": "SARAH"
+},
+{
+"code": "UR12711",
+"note": "Urban Classic Mini II"
+},
+{
+"code": "5039",
+"note": ""
+}
+],
+"to": [
+{
+"code": "AS4003",
+"note": "SARAH"
+},
+{
+"code": "UR12711",
+"note": "Urban Classic Mini II"
+},
+{
+"code": "AS5039",
+"note": "Vallon"
+}
+]
+},
+{
+"id": "R9-1-1",
+"from": [
+{
+"code": "AS7023",
+"note": ""
+},
+{
+"code": "AS7026",
+"note": ""
+},
+{
+"code": "AS7035",
+"note": ""
+},
+{
+"code": "AS7027",
+"note": ""
+},
+{
+"code": "EA7064",
+"note": ""
+},
+{
+"code": "EA7056",
+"note": ""
+},
+{
+"code": "2115",
+"note": ""
+}
+],
+"to": [
+{
+"code": "AS7023",
+"note": ""
+},
+{
+"code": "AS7026",
+"note": ""
+},
+{
+"code": "AS7035",
+"note": ""
+},
+{
+"code": "AS7027",
+"note": ""
+},
+{
+"code": "EA7064",
+"note": ""
+},
+{
+"code": "EA7056",
+"note": ""
+},
+{
+"code": "AS2115",
+"note": "Tay"
+}
+]
 }
 ]
 };
