@@ -5161,5 +5161,234 @@ window.SEED_DATA = {
 "unitNames": {},
 "vendImportedAt": "2026-11-18T17:55:00"
 },
-"version": "2026-11-18-vend2"
+"version": "2026-11-18-vend2",
+"locPatch": [
+{
+"id": "R1-3-5",
+"from": [
+{
+"code": "UEZ3021",
+"note": "DONNA"
+},
+{
+"code": "AS3112",
+"note": "GLACIAL"
+}
+],
+"to": [
+{
+"code": "AS3112",
+"note": "GLACIAL"
+},
+{
+"code": "UEA3021",
+"note": ""
+}
+]
+},
+{
+"id": "R6-1-2",
+"from": [
+{
+"code": "AS3043",
+"note": "NATALIA"
+},
+{
+"code": "UR12811",
+"note": ""
+}
+],
+"to": [
+{
+"code": "AS3043",
+"note": "NATALIA"
+},
+{
+"code": "UR12811",
+"note": ""
+},
+{
+"code": "5035",
+"note": ""
+}
+]
+},
+{
+"id": "R6-1-3",
+"from": [
+{
+"code": "AS4003",
+"note": "SARAH"
+},
+{
+"code": "UR12711",
+"note": "Urban Classic Mini II"
+}
+],
+"to": [
+{
+"code": "AS4003",
+"note": "SARAH"
+},
+{
+"code": "UR12711",
+"note": "Urban Classic Mini II"
+},
+{
+"code": "5039",
+"note": ""
+}
+]
+},
+{
+"id": "R9-1-1",
+"from": [
+{
+"code": "AS7023",
+"note": ""
+},
+{
+"code": "AS7026",
+"note": ""
+},
+{
+"code": "AS7035",
+"note": ""
+},
+{
+"code": "AS7027",
+"note": ""
+},
+{
+"code": "EA7064",
+"note": ""
+},
+{
+"code": "EA7056",
+"note": ""
+}
+],
+"to": [
+{
+"code": "AS7023",
+"note": ""
+},
+{
+"code": "AS7026",
+"note": ""
+},
+{
+"code": "AS7035",
+"note": ""
+},
+{
+"code": "AS7027",
+"note": ""
+},
+{
+"code": "EA7064",
+"note": ""
+},
+{
+"code": "EA7056",
+"note": ""
+},
+{
+"code": "2115",
+"note": ""
+}
+]
+},
+{
+"id": "S29",
+"from": [
+{
+"code": "",
+"note": "COUNTER / keyring and earmuuff"
+}
+],
+"to": [
+{
+"code": "",
+"note": "COUNTER / keyring and earmuuff"
+},
+{
+"code": "ASA016",
+"note": ""
+},
+{
+"code": "16101",
+"note": ""
+},
+{
+"code": "TAA038",
+"note": ""
+},
+{
+"code": "EAZ010",
+"note": ""
+},
+{
+"code": "EAA031",
+"note": ""
+},
+{
+"code": "TAZ090",
+"note": ""
+},
+{
+"code": "EAZ026",
+"note": ""
+}
+]
+},
+{
+"id": "S38",
+"add": {
+"area": "store",
+"unit": "S38",
+"sub": "",
+"raw": "",
+"items": [
+{
+"code": "15564",
+"note": ""
+}
+],
+"order": 6038
+}
+},
+{
+"id": "S39",
+"add": {
+"area": "store",
+"unit": "S39",
+"sub": "",
+"raw": "",
+"items": [
+{
+"code": "15564",
+"note": ""
+}
+],
+"order": 6039
+}
+},
+{
+"id": "S40",
+"add": {
+"area": "store",
+"unit": "S40",
+"sub": "",
+"raw": "",
+"items": [
+{
+"code": "15564",
+"note": ""
+}
+],
+"order": 6040
+}
+}
+]
 };

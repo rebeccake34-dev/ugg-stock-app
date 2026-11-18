@@ -195,6 +195,20 @@
         seedLocations(store);
         if (seed.meta) store['meta/main'] = Object.assign({}, store['meta/main'] || {}, { cap: seed.meta.cap, unitNames: Object.assign({}, seed.meta.unitNames, (store['meta/main'] || {}).unitNames) });
       }
+      // newer Vend import in the published data: take its stock numbers
+      const sv = (seed.meta || {}).vendImportedAt || '';
+      const lp = store['products/all'] || {};
+      if (sv && seed.products && (!lp.importedAt || String(lp.importedAt) < sv)) {
+        store['products/all'] = { list: seed.products, importedAt: sv };
+        store['meta/main'] = Object.assign({}, store['meta/main'] || {}, { vendImportedAt: sv });
+      }
+      // location changes made in the Claude version: apply only where this device still has the old content
+      const sameItems = (a, b) => JSON.stringify((a || []).map((x) => x.code + '|' + (x.note || ''))) === JSON.stringify((b || []).map((x) => x.code + '|' + (x.note || '')));
+      (seed.locPatch || []).forEach((p) => {
+        const k = 'locations/' + p.id; const cur = store[k];
+        if (!cur && p.add) store[k] = Object.assign({}, p.add);
+        else if (cur && p.from && sameItems(cur.items, p.from)) store[k] = Object.assign({}, cur, { items: p.to });
+      });
       store.__seed = { version: seed.version, layout: JSON.stringify(seed.layout || null) };
     }
     const subs = new Set();
