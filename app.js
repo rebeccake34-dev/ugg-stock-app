@@ -644,6 +644,44 @@
     draw(); dlg.showModal(); input.focus();
   }
 
+  // ---------------------------------------------------------------- one-tap recognise styles to count
+  // Uses the same smart recognition as bulk shelving (full / partial codes, names, typos).
+  function recognizeForCount(text) {
+    const items = recognize(text);
+    const codes = [], unknown = [];
+    items.forEach((x) => { if (x.code) { if (!codes.includes(x.code)) codes.push(x.code); } else unknown.push(x.raw); });
+    return { codes, unknown };
+  }
+  function countRecogCard(id, inDraft) {
+    return `<div class="card stack">
+      <b>🔎 一键识别清点款式</b>
+      <div class="small muted">把要清点的款号粘贴进来（每行一个，或用空格、逗号分开都可以），可以只打数字、英文名，拼错一个字也能认。</div>
+      <textarea id="${id}" rows="${inDraft ? 3 : 6}" placeholder="ASA019&#10;AS2115&#10;AS2119K&#10;…" autocapitalize="characters"></textarea>
+      <div class="row"><button class="btn primary grow" id="${id}Go">${inDraft ? '＋ 识别并加入清点列表' : '🔎 识别并开始清点'}</button>
+        ${sampleImages ? `<label class="btn">📷 拍照识别<input type="file" id="${id}Photo" accept="image/*" capture="environment" hidden></label>` : ''}</div>
+      <div id="${id}Msg" class="small"></div></div>`;
+  }
+  function bindCountRecog(id, onCodes) {
+    const go = (text) => {
+      const { codes, unknown } = recognizeForCount(text);
+      if (!codes.length) { $('#' + id + 'Msg').innerHTML = '<span style="color:var(--bad)">没有识别到款号，请检查后再试</span>'; return; }
+      onCodes(codes, unknown);
+    };
+    $('#' + id + 'Go').onclick = () => go($('#' + id).value);
+    const ph = $('#' + id + 'Photo');
+    if (ph) ph.onchange = async (e) => {
+      const f = e.target.files[0]; if (!f || !sampleFn) return;
+      $('#' + id + 'Msg').textContent = 'Claude 正在看照片…（可能需要半分钟）';
+      try {
+        const catalog = S.products.filter((p) => p.code).map((p) => `${p.code}\t${shortName(p.name)}`).join('\n');
+        const arr = await sampleFn.json(`This photo was taken in an UGG / Australian Shepherd / Everau shoe store (a list, labels, a slip or shelves). List every product style code you can see, mapped to a code from this catalogue (code<TAB>name). Reply with only a JSON array of code strings, like ["AS2115","ASA019"].\n\nCATALOGUE:\n${catalog}`, { images: [f] });
+        const list = (Array.isArray(arr) ? arr : []).map((x) => typeof x === 'string' ? x : x && x.code).filter(Boolean);
+        $('#' + id).value = [$('#' + id).value, list.join('\n')].filter(Boolean).join('\n');
+        $('#' + id + 'Msg').textContent = list.length ? `Claude 识别出 ${list.length} 款，请核对后点上面的按钮` : '照片里没有找到款号';
+      } catch (err) { $('#' + id + 'Msg').textContent = '识别失败，请再试一次或手动输入'; }
+    };
+  }
+
   // ---------------------------------------------------------------- daily count
   function scopeOptions() {
     const opts = [['all-store', '🏬 店面全部'], ['all-room', '📦 库房全部']];
@@ -674,6 +712,8 @@
             <li>点「完成清点」保存，再把差异报告复制发给经理</li>
           </ol>
           <div class="small muted">Vend 数据更新于 ${esc(fmtTime(S.vendImportedAt)) || '—'}。清点前最好先 <a ${goAttr('import')} style="text-decoration:underline">导入当天的 Vend 库存</a>，差异才准确。</div></div>
+        ${countRecogCard('cRec', false)}
+        <div class="small muted" style="text-align:center;margin:4px 0">—— 或者按货位范围清点 ——</div>
         <label class="field">清点范围<select id="scope">${scopeOptions().map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select></label>
         <button class="btn primary block" id="startBtn" style="margin-top:10px">开始清点</button>
         <h2>最近的清点</h2>
@@ -681,6 +721,12 @@
           const diffs = c.lines.filter((x) => x.diff !== 0).length;
           return `<a class="card row between" style="display:flex" ${goAttr('countReport', c.id)}><div><b>${esc(c.scopeLabel)}</b><div class="small muted">${esc(fmtTime(c.date))} · ${esc(c.staff)} · ${c.lines.length} 款</div></div>${diffs ? `<span class="pill bad">${diffs} 款有差异</span>` : '<span class="pill ok">全部相符</span>'}</a>`;
         }).join('') : '<div class="muted small">还没有清点记录</div>'}`);
+      bindCountRecog('cRec', async (codes, unknown) => {
+        if (!await ensureStaff()) return;
+        S.countDraft = { id: uid(), scope: 'custom', scopeLabel: `识别清点 ${codes.length} 款`, startedAt: nowISO(), staff: S.staff, lines: codes.map((c) => ({ code: c, counted: '' })) };
+        saveDraft(); render(true);
+        toast(`已加入 ${codes.length} 款${unknown.length ? `，${unknown.length} 个没认出：${unknown.join(' ')}` : ''}`);
+      });
       $('#startBtn').onclick = async () => {
         if (!await ensureStaff()) return;
         const scope = $('#scope').value, label = $('#scope').selectedOptions[0].textContent;
@@ -694,7 +740,7 @@
     view(`<h1 style="margin:0">清点：${esc(d.scopeLabel)}</h1>
       <div class="small muted">开始于 ${esc(fmtTime(d.startedAt))} · ${esc(d.staff)} · 已填 <span id="doneN">${done}</span>/${d.lines.length}（草稿只存在这台设备上）</div>
       <div class="progress"><div style="width:${d.lines.length ? done / d.lines.length * 100 : 0}%"></div></div>
-      <div class="row" style="margin:10px 0"><input id="addCode" type="text" placeholder="加一个款号到清点列表" class="grow" autocapitalize="characters"><button class="btn small" id="addCodeBtn">加入</button></div>
+      <details class="card" style="margin:10px 0" ${d.lines.length ? '' : 'open'}><summary><b>＋ 加款号到清点列表（可一次粘贴多个）</b></summary>${countRecogCard('cAdd', true)}</details>
       <div class="card" id="lines">
         <div class="count-line small muted" style="padding-top:0"><div>款号 / 货位</div><div class="sys">系统</div><div style="text-align:center">实数</div></div>
         ${d.lines.map((x, i) => {
@@ -727,12 +773,12 @@
       });
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const nx = $(`#lines input[data-i="${i + 1}"]`); if (nx) nx.focus(); } });
     });
-    $('#addCodeBtn').onclick = () => {
-      const c = resolveCode($('#addCode').value);
-      if (!c) return;
-      if (d.lines.some((x) => x.code === c)) { toast('已经在列表里了'); return; }
-      d.lines.push({ code: c, counted: '' }); saveDraft(); render(false);
-    };
+    bindCountRecog('cAdd', (codes, unknown) => {
+      const fresh = codes.filter((c) => !d.lines.some((x) => x.code === c));
+      fresh.forEach((c) => d.lines.push({ code: c, counted: '' }));
+      saveDraft(); render(false);
+      toast(`已加入 ${fresh.length} 款${codes.length - fresh.length ? `（${codes.length - fresh.length} 款已在列表里）` : ''}${unknown.length ? `，没认出：${unknown.join(' ')}` : ''}`);
+    });
     $('#cancelBtn').onclick = async () => { if (await confirmDlg('放弃这次清点？已填的数字会清空。', '放弃')) { S.countDraft = null; saveDraft(); render(true); } };
     $('#finishBtn').onclick = async () => {
       const lines = d.lines.filter((x) => x.counted !== '').map((x) => {

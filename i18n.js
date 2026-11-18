@@ -676,5 +676,17 @@ window.I18N_EN = {
 "贴合内容": "Fit to content",
 "地图大小": "Map size",
 "全部放大": "Enlarge all",
-"全部缩小": "Shrink all"
+"全部缩小": "Shrink all",
+"把要清点的款号粘贴进来（每行一个，或用空格、逗号分开都可以），可以只打数字、英文名，拼错一个字也能认。": "Paste the codes to count (one per line, or separated by spaces or commas). Numbers only, English names or a one-character typo all work.",
+"一键识别清点款式": "Recognise styles to count",
+"识别并加入清点列表": "Recognise and add to the count list",
+"识别并开始清点": "Recognise and start counting",
+"或者按货位范围清点": "or count by location",
+"加款号到清点列表（可一次粘贴多个）": "Add codes to the count list (paste many at once)",
+"没有识别到款号，请检查后再试": "No codes recognised — please check and try again",
+"请核对后点上面的按钮": "please check, then tap the button above",
+"识别清点": "Recognised count",
+"已加入": "Added",
+"款已在列表里）": "styles already on the list)",
+"没认出：": "not recognised: "
 };
