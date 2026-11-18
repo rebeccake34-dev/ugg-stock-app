@@ -2457,9 +2457,9 @@ window.SEED_DATA = {
   {
    "code": "EA5048",
    "name": "Everau Mason",
-   "qty": 96,
+   "qty": 106,
    "closing": 96,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "16101",
@@ -2471,9 +2471,9 @@ window.SEED_DATA = {
   {
    "code": "EA7035",
    "name": "Everau Mick Sandal Slides",
-   "qty": 60,
+   "qty": 61,
    "closing": 60,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "EA7100",
@@ -2485,9 +2485,9 @@ window.SEED_DATA = {
   {
    "code": "15564",
    "name": "As*muffin Slipper",
-   "qty": 56,
+   "qty": 61,
    "closing": 56,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "15801",
@@ -2499,9 +2499,9 @@ window.SEED_DATA = {
   {
    "code": "AS2115",
    "name": "Australian Shepherd Tay",
-   "qty": 49,
+   "qty": 56,
    "closing": 49,
-   "lastReceived": "2026-11-16 17:21:20"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "EA7050",
@@ -2520,9 +2520,9 @@ window.SEED_DATA = {
   {
    "code": "AS2036",
    "name": "Australian Shepherd Cruz Slipper",
-   "qty": 46,
+   "qty": 48,
    "closing": 46,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS2089",
@@ -2534,23 +2534,23 @@ window.SEED_DATA = {
   {
    "code": "AS2051",
    "name": "Australian Shepherd Muffin Slipper Special",
-   "qty": 43,
+   "qty": 54,
    "closing": 43,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "15701",
    "name": "AS*Mini classic",
-   "qty": 41,
+   "qty": 42,
    "closing": 41,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS2061",
    "name": "Australian Shepherd Hippie",
-   "qty": 41,
+   "qty": 43,
    "closing": 41,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "15545",
@@ -2562,9 +2562,9 @@ window.SEED_DATA = {
   {
    "code": "AS3068",
    "name": "Australian Shepherd Jade",
-   "qty": 39,
+   "qty": 40,
    "closing": 39,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "EA7090",
@@ -2625,9 +2625,9 @@ window.SEED_DATA = {
   {
    "code": "EA7088",
    "name": "Everau Mounish",
-   "qty": 31,
+   "qty": 32,
    "closing": 31,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS8008",
@@ -2737,9 +2737,9 @@ window.SEED_DATA = {
   {
    "code": "TA2020",
    "name": "Baby Walking Shoes",
-   "qty": 23,
+   "qty": 29,
    "closing": 23,
-   "lastReceived": "2026-11-11 17:49:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "ASA040",
@@ -2814,9 +2814,9 @@ window.SEED_DATA = {
   {
    "code": "EA7034",
    "name": "Everau Bera",
-   "qty": 21,
+   "qty": 25,
    "closing": 21,
-   "lastReceived": "2026-11-16 17:21:38"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "521029",
@@ -2898,9 +2898,9 @@ window.SEED_DATA = {
   {
    "code": "UR3008",
    "name": "Urban Short Back Bow",
-   "qty": 18,
+   "qty": 19,
    "closing": 18,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS2091",
@@ -2940,16 +2940,16 @@ window.SEED_DATA = {
   {
    "code": "EA5048M",
    "name": "Everau Mason Men",
-   "qty": 17,
+   "qty": 18,
    "closing": 17,
-   "lastReceived": "2026-11-16 17:21:56"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "ASA013",
    "name": "Australian Shepherd Connie Earmuff",
-   "qty": 17,
+   "qty": 20,
    "closing": 17,
-   "lastReceived": "2026-11-06 12:22:30"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS7022",
@@ -2996,9 +2996,9 @@ window.SEED_DATA = {
   {
    "code": "EA7098",
    "name": "Everau Cova",
-   "qty": 16,
+   "qty": 17,
    "closing": 16,
-   "lastReceived": "2026-11-16 17:21:38"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS3030K",
@@ -3059,9 +3059,9 @@ window.SEED_DATA = {
   {
    "code": "AS7034",
    "name": "Australian Shepherd Norven",
-   "qty": 15,
+   "qty": 17,
    "closing": 15,
-   "lastReceived": "2026-11-11 17:12:09"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "ASA060",
@@ -3486,9 +3486,9 @@ window.SEED_DATA = {
   {
    "code": "AS2077",
    "name": "Australian Shepherd Musa Platform",
-   "qty": 9,
+   "qty": 10,
    "closing": 9,
-   "lastReceived": "2026-09-21 14:52:45"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "EA7114",
@@ -3738,9 +3738,9 @@ window.SEED_DATA = {
   {
    "code": "BA1022",
    "name": "Barmah Squashy Bronco Two Tone Hatband",
-   "qty": 6,
+   "qty": 12,
    "closing": 6,
-   "lastReceived": "2026-11-12 15:57:24"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS3028",
@@ -3808,9 +3808,9 @@ window.SEED_DATA = {
   {
    "code": "AS5030",
    "name": "Australian Shepherd Lorne",
-   "qty": 6,
+   "qty": 7,
    "closing": 6,
-   "lastReceived": "2026-08-10 15:21:34"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "AS3101",
@@ -3934,9 +3934,9 @@ window.SEED_DATA = {
   {
    "code": "EAA043",
    "name": "Everau Conira Hat",
-   "qty": 4,
+   "qty": 6,
    "closing": 4,
-   "lastReceived": "2026-11-16 17:21:01"
+   "lastReceived": "2026-11-18 12:59"
   },
   {
    "code": "ASA051",
@@ -4623,6 +4623,125 @@ window.SEED_DATA = {
    "qty": 1,
    "closing": 1,
    "lastReceived": "2026-10-30 11:03:03"
+  },
+  {
+   "code": "HA_HSRL5237",
+   "name": "HA_HSRL5237",
+   "qty": 5,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSLS2976F",
+   "name": "HA_HSLS2976F",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSCS3582F",
+   "name": "HA_HSCS3582F",
+   "qty": 2,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSCS0091F",
+   "name": "HA_HSCS0091F",
+   "qty": 4,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HTMT1069",
+   "name": "HA_HTMT1069",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSRL0133",
+   "name": "HA_HSRL0133",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HTCT0001",
+   "name": "HA_HTCT0001",
+   "qty": 2,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HTCT0555",
+   "name": "HA_HTCT0555",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSCC0091",
+   "name": "HA_HSCC0091",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HTPL3624",
+   "name": "HA_HTPL3624",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSPO7892",
+   "name": "HA_HSPO7892",
+   "qty": 2,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSPG0092",
+   "name": "HA_HSPG0092",
+   "qty": 2,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSPP0074",
+   "name": "HA_HSPP0074",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "HA_HSCC0090",
+   "name": "HA_HSCC0090",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "AS5035",
+   "name": "AS5035",
+   "qty": 1,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "AS2150",
+   "name": "AS2150",
+   "qty": 2,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
+  },
+  {
+   "code": "AS5039",
+   "name": "AS5039",
+   "qty": 3,
+   "closing": 0,
+   "lastReceived": "2026-11-18 12:59"
   }
  ],
  "layout": {
@@ -4678,8 +4797,8 @@ window.SEED_DATA = {
    "S07": [
     625,
     555,
-    128,
-    147
+    125,
+    135
    ],
    "S08": [
     465,
@@ -4756,8 +4875,8 @@ window.SEED_DATA = {
    "S20": [
     755,
     555,
-    128,
-    144
+    125,
+    135
    ],
    "S21": [
     905,
@@ -4810,8 +4929,8 @@ window.SEED_DATA = {
    "S29": [
     463,
     404,
-    164,
-    48
+    205,
+    70
    ],
    "S30": [
     550,
@@ -4945,5 +5064,5 @@ window.SEED_DATA = {
   "lowStock": 3,
   "unitNames": {}
  },
- "version": "2026-11-18-cap1"
+ "version": "2026-11-18-sync2"
 };

@@ -387,7 +387,9 @@
     if (lower.length >= 2) S.locations.forEach((l) => (l.items || []).forEach((it) => {
       if (it.code && (it.note || '').toLowerCase().includes(lower)) add(resolveCode(it.code), 35);
     }));
-    return [...seen.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 40).map((e) => e[0]);
+    const out = [...seen.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 40);
+    searchProducts.lastExact = !!(out[0] && out[0][1] === 100);   // exact code typed → map only that style
+    return out.map((e) => e[0]);
   }
   function searchLocationsByText(q) {
     const lower = q.trim().toLowerCase();
@@ -425,7 +427,10 @@
       const codes = searchProducts(q.value), locs = searchLocationsByText(q.value);
       $('#results').innerHTML = !q.value.trim() ? homeSummary()
         : (!codes.length && !locs.length) ? `<div class="empty-state">找不到「${esc(q.value)}」<br><span class="small">检查款号是否正确，或者去「更多 → 库存总览」看全部款号。</span></div>`
-          : codes.map(productCard).join('') + (locs.length ? '<h2>相关位置</h2>' + locs.map((l) => locChip(l.id)).join('') : '');
+          : codes.slice(0, 3).map(productCard).join('') + mapsForCodes(mapCodes()) + codes.slice(3).map(productCard).join('') + (locs.length ? '<h2>相关位置</h2>' + locs.map((l) => locChip(l.id)).join('') : '');
+      if (codes.length) bindMapsForCodes($('#results'), mapCodes());
+      // exact code → map that style only; otherwise the first 3 results that have a location
+      function mapCodes() { return codes.filter((c) => codeLocs[c]).slice(0, searchProducts.lastExact ? 1 : 3); }
     };
     q.addEventListener('input', run);
     run();
@@ -486,8 +491,10 @@
       <div class="card">${locs.length ? locs.map((id) => `<div class="item-line"><div class="grow">${locChip(id, code)}</div><button class="btn small" data-mv="${esc(id)}">更改存放地</button><button class="btn small danger" data-rm="${esc(id)}">移除</button></div>`).join('') : '<span class="muted">还没有登记货位</span>'}
         <div style="margin-top:10px"><button class="btn small" id="addLocBtn">＋ 再登记一个货位</button>
         <button class="btn small" ${goAttr('returns', '', { c: code })}>📦 退库这个款</button></div></div>
+      ${mapsForCodes([code])}
       ${rets.length ? `<h2>退库记录</h2><div class="card">${rets.map((r) => `<div class="small">${esc(fmtTime(r.date))} · ${esc(r.staff)} · ${r.qty} 双 ${esc(r.size || '')} · ${r.status === 'pending' ? '<span class="pill warn">待退</span>' : '<span class="pill ok">已寄出</span>'}</div>`).join('')}</div>` : ''}
       ${history.length ? `<h2>修改记录</h2><div class="card">${history.map(logLine).join('')}</div>` : ''}`);
+    bindMapsForCodes($('#view'), [code]);
     $$('[data-mv]').forEach((b) => b.onclick = async () => {
       if (!await ensureStaff()) return;
       const from = b.dataset.mv;
@@ -1026,7 +1033,7 @@
   }
 
   // ---------------------------------------------------------------- change log
-  const LOG_TYPES = { move: '移动', add: '添加', remove: '删除', note: '改备注', rename: '改名', newloc: '新位置', delloc: '删位置', count: '清点', return: '退库登记', 'return-sent': '退库寄出', 'return-del': '删退库', import: '导入 Vend', 'stock-in': '到货入库', 'stock-out': '退货出库', 'stock-undo': '撤销库存变动', move: '库存变动', layby: 'Layby 登记', 'layby-notified': 'Layby 已通知', 'layby-collected': 'Layby 已取货', 'note-add': '新便签', layout: '调整地图', 'shelf-size': '货架格数', capacity: '容量设置' };
+  const LOG_TYPES = { move: '移动', add: '添加', remove: '删除', note: '改备注', rename: '改名', newloc: '新位置', delloc: '删位置', count: '清点', return: '退库登记', 'return-sent': '退库寄出', 'return-del': '删退库', import: '导入 Vend', 'stock-in': '到货入库', 'stock-out': '退货出库', 'stock-undo': '撤销库存变动', move: '库存变动', layby: 'Layby 登记', 'layby-notified': 'Layby 已通知', 'layby-collected': 'Layby 已取货', 'note-add': '新便签', sync: '同步', layout: '调整地图', 'shelf-size': '货架格数', capacity: '容量设置' };
   function logText(g) {
     const d = g.detail || {};
     switch (g.type) {
@@ -1047,6 +1054,7 @@
       case 'stock-undo': return `撤销「${d.source}」（${d.n} 款）`;
       case 'move': return `${moveMeta(d.kind).zh}：${d.code ? d.code + ' ' : ''}${d.source}，${d.n} 款 ${d.total} 件`;
       case 'note-add': return `新便签：${d.text}`;
+      case 'sync': return `从${d.from}同步（${fmtTime(d.at)} 导出）`;
       case 'layby': return `登记 layby：${d.name} 等 ${d.code}`;
       case 'layby-notified': return `已通知 ${d.name}（${d.code}）`;
       case 'layby-collected': return `${d.name} 已取货（${d.code}）`;
@@ -1092,7 +1100,25 @@
         ? '这是网页版（GitHub）：所有数据只存在这台设备的浏览器里，不会和别的手机或 Claude 版同步。换手机前先「下载完整备份」，在新设备上「从备份恢复」。照片很占空间，建议定期删除旧照片。'
         : '货位、清点、退库和修改记录都存在 Claude 里，你的手机和电脑打开都是同一份，改了马上同步。只有正在进行中的清点草稿存在当前设备上。'}</div>
         <div class="row" style="margin-top:8px"><button class="btn small" id="backup">⬇️ 下载完整备份 (JSON)</button>
-        ${LOCAL ? '<label class="btn small">⬆️ 从备份恢复<input type="file" id="restore" accept=".json" hidden></label>' : ''}</div></div>`);
+        ${LOCAL ? '<label class="btn small">⬆️ 从备份恢复<input type="file" id="restore" accept=".json" hidden></label>' : ''}</div></div>
+      <div class="card stack"><b>🔄 Claude 版 ⇄ 网页版（GitHub）同步</b>
+        <div class="small muted">两个版本的数据分开存放。要同步时：在改过的那一边点「导出同步文件」，再到另一边点「导入同步文件」。会覆盖对方的货位、库存、地图和设置，并合并便签、Layby、待退清单和库存变动记录。</div>
+        <div class="row"><button class="btn small primary" id="syncOut">⬇️ 导出同步文件</button>
+          <label class="btn small">⬆️ 导入同步文件<input type="file" id="syncIn" accept=".json" hidden></label></div>
+        <div id="syncMsg" class="small"></div></div>`);
+    $('#syncOut').onclick = () => saveFile(`ugg同步_${LOCAL ? '网页版' : 'Claude版'}_${fmtTime(nowISO()).replace(/[: ]/g, '-')}.json`, JSON.stringify(syncSnapshot()));
+    $('#syncIn').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      try {
+        const data = JSON.parse(await f.text());
+        if (data.format !== 'ugg-sync-v1') throw new Error('不是同步文件');
+        if (!await ensureStaff()) return;
+        if (!await confirmDlg(`导入「${data.from || ''}」${fmtTime(data.at)} 的同步文件？这边的货位、库存、地图和设置会被覆盖。`, '导入')) return;
+        $('#syncMsg').textContent = '正在同步…';
+        const n = await applySync(data);
+        toast(`已同步：${n.locations} 个货位、${n.products} 款库存、地图和设置，合并 ${n.extra} 条其他记录。`);
+      } catch (err) { $('#syncMsg').textContent = '同步失败：' + (err.message || err); }
+    };
     if ($('#restore')) $('#restore').onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;
       try {
@@ -1109,6 +1135,40 @@
       renderStaff(); toast('已保存');
     };
     $('#backup').onclick = () => LOCAL ? saveFile(`ugg货位备份_${today()}.json`, JSON.stringify({ format: 'ugg-local-v1', at: nowISO(), store: db.dump() })) : saveFile(`ugg货位备份_${today()}.json`, JSON.stringify({ locations: S.locations, products: S.products, unitNames: S.unitNames, returns: S.returns, counts: S.counts, log: S.log, vendImportedAt: S.vendImportedAt }, null, 1));
+  }
+
+  // ---------------------------------------------------------------- sync file (Claude version ⇄ web version)
+  function syncSnapshot() {
+    return {
+      format: 'ugg-sync-v1', from: LOCAL ? '网页版' : 'Claude版', at: nowISO(),
+      locations: S.locations, products: S.products,
+      meta: { unitNames: S.unitNames, lowStock: S.lowStock, vendImportedAt: S.vendImportedAt, cap: S.cap },
+      layout: { storeroom: S.layout.storeroom || {}, store: S.layout.store || {}, labels: S.layout.labels || null, room: S.layout.room || null },
+      notes: S.notes, laybys: S.laybys, returns: S.returns, imports: S.imports, counts: S.counts,
+    };
+  }
+  async function applySync(d) {
+    const keep = new Set(d.locations.map((l) => l.id));
+    S.locations.filter((l) => !keep.has(l.id)).forEach((l) => delLoc(l.id));
+    d.locations.forEach((l) => putLoc(l));
+    S.locations = d.locations.slice();
+    S.products = d.products.slice(); S.vendImportedAt = d.meta.vendImportedAt || S.vendImportedAt;
+    S.unitNames = d.meta.unitNames || {}; S.lowStock = d.meta.lowStock || 3; S.cap = Object.assign({}, S.cap, d.meta.cap || {});
+    S.layout = Object.assign({ storeroom: {}, store: {} }, d.layout || {});
+    putProducts(); putMeta(); putLayout();
+    // merge the record lists by id (newer copy wins)
+    let extra = 0;
+    const merge = (name, list, put) => (list || []).forEach((r) => {
+      const mine = S[name].find((x) => x.id === r.id);
+      if (mine && JSON.stringify(mine) === JSON.stringify(r)) return;
+      if (mine) Object.assign(mine, r); else S[name].push(r);
+      put(r); extra++;
+    });
+    merge('notes', d.notes, putNote); merge('laybys', d.laybys, putLayby); merge('returns', d.returns, putReturn);
+    merge('imports', d.imports, putImport); merge('counts', d.counts, putCount);
+    addLog('sync', { from: d.from || '', at: d.at });
+    rebuildIndex(); render(false);
+    return { locations: d.locations.length, products: d.products.length, extra };
   }
 
   // ================================================================ capacity estimate
@@ -1212,7 +1272,7 @@
       <h2>逐个款号</h2>${codes.map(productCard).join('')}`;
   }
   function bindBatch(codes) {
-    bindMap($('#view'), new Set(codes)); bindZoom($('#view'));
+    bindMap($('#view'), new Set(codes)); bindZoom($('#view')); requestAnimationFrame(() => scrollToHit($('#view')));
     const bc = $('#batchCount');
     if (bc) bc.onclick = async () => {
       if (!await ensureStaff()) return;
@@ -1908,7 +1968,7 @@
       const lines = l.items.map((it) => it.code || it.note).filter(Boolean);
       const hit = hiSet && hiSet.size && l.items.some((it) => it.code && hiSet.has(resolveCode(it.code)));
       const pct = (est.cell[l.id] || 0) / cellCap(l);
-      return `<g data-loc="${esc(l.id)}" transform="translate(${cx},${cy})"><rect width="${W}" height="${H}" fill="${hit ? FILL.hi : lines.length ? FILL[fillClass(pct)] : '#f4efe8'}" stroke="#8a7a66" stroke-width="1.5"/>${foText(lines, W, H, '', hiSet)}</g>`;
+      return `<g data-loc="${esc(l.id)}" ${hit ? 'data-hit="1"' : ''} transform="translate(${cx},${cy})"><rect width="${W}" height="${H}" fill="${hit ? FILL.hi : lines.length ? FILL[fillClass(pct)] : '#f4efe8'}" stroke="#8a7a66" stroke-width="1.5"/>${foText(lines, W, H, '', hiSet)}</g>`;
     }).join('');
     const sel = mapEditing && selected && selected.kind === 'block' && selected.id === u;
     return `<g data-unit="${esc(u)}" transform="translate(${x},${y})">
@@ -1926,7 +1986,7 @@
     const lines = locs.flatMap((l) => (l.sub ? [`[${l.sub}]`] : []).concat(l.items.map((it) => it.code || it.note).filter(Boolean)));
     const hit = hiSet && hiSet.size && locs.some((l) => l.items.some((it) => it.code && hiSet.has(resolveCode(it.code))));
     const sel = mapEditing && selected && selected.kind === 'block' && selected.id === u;
-    return `<g data-unit="${esc(u)}" transform="translate(${x},${y})">
+    return `<g data-unit="${esc(u)}" ${hit ? 'data-hit="1"' : ''} transform="translate(${x},${y})">
       <rect width="${w}" height="${h}" rx="4" fill="${hit ? FILL.hi : '#eaf1f7'}" stroke="${hit ? '#b5762f' : sel ? '#2b2118' : '#7f9ab1'}" stroke-width="${hit || sel ? 5 : 1.5}"/>
       <rect width="${w}" height="${T}" fill="${hit ? '#b5762f' : '#46596b'}"/>
       <text x="6" y="${T - 6}" font-size="17" font-weight="700" fill="#fff">${esc(unitName(u).replace(/^店面\s*/, ''))}</text>
@@ -2033,6 +2093,27 @@
         applyZoom(wrap, area, getZoom(area) * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX - r.left);
       }, { passive: false });
     });
+  }
+  function scrollToHit(root) {
+    $$('.map-wrap', root).forEach((wrap) => {
+      const el = $('[data-hit]', wrap); if (!el) return;
+      const r = el.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+      wrap.scrollLeft += (r.left - w.left) - (wrap.clientWidth - r.width) / 2;
+      wrap.scrollTop += (r.top - w.top) - (wrap.clientHeight - r.height) / 2;
+    });
+  }
+  // only the maps that contain one of the codes
+  function mapsForCodes(codes) {
+    const hs = new Set(codes);
+    const has = (area) => codes.some((c) => (codeLocs[c] || []).some((id) => locById[id] && locById[id].area === area));
+    let html = '';
+    if (has('storeroom')) html += `<h2>📦 在仓库的位置</h2>${mapBox('storeroom', mapSVG('storeroom', hs))}`;
+    if (has('store')) html += `<h2>🏬 在店面的位置</h2>${mapBox('store', mapSVG('store', hs))}`;
+    return html ? html + '<div class="small muted" style="margin:4px 0 10px">橙色 = 这个款放的位置，地图已经自动移到那里。点格子看详情。</div>' : '';
+  }
+  function bindMapsForCodes(root, codes) {
+    bindMap(root, new Set(codes)); bindZoom(root);
+    requestAnimationFrame(() => scrollToHit(root));
   }
   function openUnit(area, unit, hiSet) {
     const codes = hiSet && hiSet.size ? [...hiSet].join(',') : '';
