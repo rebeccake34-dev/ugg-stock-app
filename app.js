@@ -12,7 +12,7 @@
   const S = {
     loaded: { locations: false, meta: false, products: false },
     locations: [], products: [], vendImportedAt: '', unitNames: {}, lowStock: 3,
-    returns: [], counts: [], log: [], imports: [], laybys: [], notes: [],
+    returns: [], counts: [], log: [], imports: [], laybys: [], notes: [], variants: {}, variantsAt: '',
     layout: { storeroom: {}, store: {} },
     cap: { h: 6, l: 7, d: 2, display: 2, mode: 'cell', xl: ['15901', '15902'], xlH: 5, xlD: 1, daily: 8 },
     staff: lsGet(LS_STAFF) || '',
@@ -151,7 +151,7 @@
   }
   async function saveFile(filename, text) {
     if (LOCAL) {
-      const blob = new Blob([filename.endsWith('.csv') ? '\ufeff' + tr(text) : text], { type: filename.endsWith('.csv') ? 'text/csv;charset=utf-8' : 'application/json' });
+      const blob = new Blob([filename.endsWith('.csv') ? '\ufeff' + tr(text) : text], { type: filename.endsWith('.csv') ? 'text/csv;charset=utf-8' : filename.endsWith('.ics') ? 'text/calendar;charset=utf-8' : filename.endsWith('.svg') ? 'image/svg+xml' : 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = tr(filename);
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
       return;
@@ -218,6 +218,11 @@
     };
     try { persist(); } catch (e) { /* reported on the first write */ }
     const fire = () => setTimeout(() => subs.forEach((f) => f()), 0);
+    // another tab / window of this app on the same device changed the data → take it over immediately
+    window.addEventListener('storage', (e) => {
+      if (e.key !== KEY || !e.newValue) return;
+      try { store = JSON.parse(e.newValue); fire(); } catch (err) { /* ignore a half-written value */ }
+    });
     const meta = { fromCache: false, hasPendingWrites: false };
     const snapDoc = (p) => ({ id: p.split('/').pop(), exists: p in store, data: () => store[p], metadata: meta });
     const clone = (d) => JSON.parse(JSON.stringify(d));
@@ -273,6 +278,7 @@
   const putLayout = () => write('meta/layout', () => db.doc('meta/layout').set({ storeroom: S.layout.storeroom || {}, store: S.layout.store || {}, labels: S.layout.labels || null, room: S.layout.room || null }));
   const putImport = (r) => write('imports/' + r.id, () => db.doc('imports/' + r.id).set(strip(r)));
   const putProducts = () => write('products/all', () => db.doc('products/all').set({ list: S.products, importedAt: S.vendImportedAt }));
+  const putVariants = () => write('variants/all', () => db.doc('variants/all').set({ list: S.variants, importedAt: S.variantsAt }));
   const putReturn = (r) => write('returns/' + r.id, () => db.doc('returns/' + r.id).set(strip(r)));
   const delReturn = (id) => write('returns/' + id, () => db.doc('returns/' + id).delete());
   const putCount = (c) => write('counts/' + c.id, () => db.doc('counts/' + c.id).set(strip(c)));
@@ -307,6 +313,55 @@
       });
     });
   }
+  // ---------------------------------------------------------------- colour / size stock (variants)
+  // S.variants[code] = [[colour, size, qty], ...]  — one row per colour+size that Vend reports stock for
+  const vlist = (code) => (S.variants[code] || []).filter((v) => v[2] > 0);
+  const vSum = (code) => (S.variants[code] || []).reduce((a, v) => a + (v[2] || 0), 0);
+  const vLabel = (v) => [v[0], v[1]].filter(Boolean).join(' / ');
+  const sizeKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.\-]/g, '');
+  const sizeCmp = (a, b) => {
+    const na = parseFloat(a), nb = parseFloat(b);
+    if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+    const order = ['xs', 's', 'm', 'l', 'xl', 'xxl', 'onesize', 'free'];
+    const ia = order.indexOf(sizeKey(a)), ib = order.indexOf(sizeKey(b));
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    return String(a).localeCompare(String(b), undefined, { numeric: true });
+  };
+  // "38 choc", "size 7 chestnut", "black M" → the one colour+size row it means (or null when unclear)
+  function findVariant(code, text) {
+    const rows = S.variants[code] || [];
+    const t = ' ' + String(text || '').toLowerCase().replace(/size|sz|尺码|码/g, ' ').replace(/[(),/]/g, ' ') + ' ';
+    if (!rows.length || !t.trim()) return null;
+    const sizes = [...new Set(rows.map((v) => sizeKey(v[1])))];
+    let pool = rows;
+    const sizeTok = t.split(/\s+/).filter(Boolean).find((w) => sizes.includes(sizeKey(w)));
+    if (sizeTok) pool = pool.filter((v) => sizeKey(v[1]) === sizeKey(sizeTok));
+    const words = t.split(/\s+/).filter((w) => /^[a-z]{2,}$/.test(w) && !sizes.includes(w) && !/^(one|size|free)$/.test(w));
+    if (words.length) {
+      const hit = pool.filter((v) => words.some((w) => String(v[0]).toLowerCase().split(/[\s/]+/).some((c) => c.startsWith(w) || (w.length >= 4 && c.includes(w)))));
+      if (hit.length) pool = hit; else if (!sizeTok) return null;
+    }
+    if (pool.length === 1 && (sizeTok || words.length)) return pool[0];
+    return null;
+  }
+  function bumpVariant(code, color, size, delta) {
+    const rows = S.variants[code] || (S.variants[code] = []);
+    let v = rows.find((x) => x[0] === color && x[1] === size);
+    if (!v) { v = [color, size, 0]; rows.push(v); }
+    v[2] += delta;
+  }
+  // colour × size grid for one style
+  function variantGrid(code) {
+    const rows = vlist(code);
+    if (!rows.length) return '';
+    const sizes = [...new Set(rows.map((v) => v[1]))].sort(sizeCmp);
+    const colors = [...new Set(rows.map((v) => v[0]))].sort((a, b) => String(a).localeCompare(String(b)));
+    const q = (c, z) => { const v = rows.find((x) => x[0] === c && x[1] === z); return v ? v[2] : 0; };
+    return `<div class="vgrid-wrap"><table class="vgrid"><thead><tr><th>颜色 \\ 尺码</th>${sizes.map((z) => `<th>${esc(z)}</th>`).join('')}<th>合计</th></tr></thead><tbody>
+      ${colors.map((c) => `<tr><th>${esc(c || '—')}</th>${sizes.map((z) => { const n = q(c, z); return `<td class="${n ? 'has' : ''}">${n || ''}</td>`; }).join('')}<td><b>${sizes.reduce((a, z) => a + q(c, z), 0)}</b></td></tr>`).join('')}
+      </tbody></table></div>`;
+  }
+  const variantGap = (code) => (P[code] ? P[code].qty : 0) - vSum(code);
   const pendingReturnQty = (code) => S.returns.filter((r) => r.status === 'pending' && r.code === code).reduce((a, r) => a + Number(r.qty || 0), 0);
 
   // ---------------------------------------------------------------- naming
@@ -331,15 +386,15 @@
   const itemName = (it) => { const p = P[resolveCode(it.code)]; return p ? p.name : (it.note || ''); };
 
   // ---------------------------------------------------------------- router (only plain #names reach the URL here)
-  const TABS = ['today', 'search', 'map', 'count', 'stock', 'more'];
+  const TABS = ['today', 'search', 'map', 'count', 'stock', 'layby', 'more'];
   let cur = { n: 'today', a: '', p: {} };
   const stack = [];
   const routes = {
-    today: viewToday, overview: viewStock, layby: viewLayby, search: viewSearch, map: viewMap, loc: viewLoc, count: viewCount, countReport: viewCountReport,
+    today: viewToday, overview: viewStock, layby: viewLayby, laybyEdit: viewLaybyEdit, search: viewSearch, map: viewMap, loc: viewLoc, count: viewCount, countReport: viewCountReport,
     returns: viewReturns, stock: viewStockHub, more: viewMore, log: viewLog, import: viewImport, product: viewProduct,
     shelf: viewShelf, tidy: viewTidy, docs: viewDocs, bulk: viewBulk, notes: viewNotes,
   };
-  const GROUP = { notes: 'today', bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', layby: 'stock', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
+  const GROUP = { notes: 'today', bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', laybyEdit: 'layby', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
   function navigate(r, push = true) {
     if (push) stack.push(cur);
     if (stack.length > 50) stack.shift();
@@ -425,6 +480,7 @@
           ${pend ? `<div><span class="pill warn">待退库 ${pend}</span></div>` : ''}
         </div>
       </div>
+      ${(() => { const vl = vlist(code); if (!vl.length) return ''; const cs = [...new Set(vl.map((v) => v[0]).filter(Boolean))]; return `<div class="small muted" style="margin-top:4px">${cs.length ? esc(cs.slice(0, 4).join('、')) + (cs.length > 4 ? ` 等 ${cs.length} 色` : '') + ' · ' : ''}尺码 ${esc([...new Set(vl.map((v) => v[1]))].sort(sizeCmp).join(' '))}</div>`; })()}
       <div style="margin-top:6px">${locs.length ? locs.map((id) => locChip(id, code)).join('') : `<span class="pill bad">还没有记录货位</span> <a class="small" ${goAttr('product', code)}>添加货位</a>`}</div>
     </div>`;
   }
@@ -487,6 +543,13 @@
   }
 
   // ---------------------------------------------------------------- product page
+  function variantSection(code) {
+    if (!vlist(code).length) return (P[code] && Object.keys(S.variants).length) ? '<h2>颜色和尺码</h2><div class="card small muted">这个款还没有颜色尺码数据（导入「product variant」版 Vend 报表后会显示）。</div>' : '';
+    const gap = variantGap(code);
+    return `<h2>颜色和尺码</h2><div class="card">${variantGrid(code)}
+      ${gap ? `<div class="small" style="margin-top:6px;color:var(--warn)">⚠️ 总库存比颜色尺码合计${gap > 0 ? '多' : '少'} ${Math.abs(gap)}：有库存变动没写清颜色或尺码，下次导入带颜色尺码的 Vend 报表后会自动对齐。</div>` : '<div class="small muted" style="margin-top:6px">合计和系统库存一致</div>'}
+      <div class="small muted">颜色尺码更新于 ${esc(fmtTime(S.variantsAt)) || '—'}</div></div>`;
+  }
   function viewProduct(code) {
     code = resolveCode(code);
     const p = P[code];
@@ -501,6 +564,7 @@
           <div><div class="qty">${pendingReturnQty(code)}</div><div class="small muted">待退库</div></div>
           <div class="small muted">最近到货<br>${esc(fmtTime(p.lastReceived)) || '—'}</div></div>` : ''}
       </div>
+      ${variantSection(code)}
       <h2>货位</h2>
       <div class="card">${locs.length ? locs.map((id) => `<div class="item-line"><div class="grow">${locChip(id, code)}</div><button class="btn small" data-mv="${esc(id)}">更改存放地</button><button class="btn small danger" data-rm="${esc(id)}">移除</button></div>`).join('') : '<span class="muted">还没有登记货位</span>'}
         <div style="margin-top:10px"><button class="btn small" id="addLocBtn">＋ 再登记一个货位</button>
@@ -771,7 +835,10 @@
               <div class="small muted">${esc(shortName(p ? p.name : '（Vend 无记录）'))}</div>
               <div class="small">${(codeLocs[x.code] || []).map((id) => esc(locLabel(locById[id]))).join(' · ')}</div></div>
             <div class="sys"><b>${p ? p.qty : '—'}</b></div>
-            <input type="number" inputmode="numeric" min="0" data-i="${i}" value="${esc(x.counted)}" aria-label="${esc(x.code)} 实际数量"></div>`;
+            <input type="number" inputmode="numeric" min="0" data-i="${i}" value="${esc(x.counted)}" aria-label="${esc(x.code)} 实际数量"></div>
+          ${vlist(x.code).length ? `<details class="vcount"><summary class="small">按颜色尺码清点（${vlist(x.code).length} 种）</summary>
+            <div class="vc-grid">${vlist(x.code).map((v, k) => `<label class="vc"><span>${esc(vLabel(v))} <i class="muted">系统 ${v[2]}</i></span><input type="number" inputmode="numeric" min="0" data-vi="${i}" data-vk="${k}" value="${esc((x.vc || {})[vLabel(v)] == null ? '' : x.vc[vLabel(v)])}"></label>`).join('')}</div>
+            <div class="small muted">没填的颜色尺码按系统数计算；合计会自动填进上面的实数。</div></details>` : ''}`;
         }).join('')}
       </div>
       <div class="sticky-actions row"><button class="btn danger" id="cancelBtn">放弃</button><button class="btn primary grow" id="finishBtn">完成清点（${done} 款）</button></div>`);
@@ -782,7 +849,7 @@
       el.className = 'diff ' + (df > 0 ? 'plus' : df < 0 ? 'minus' : 'zero');
       el.textContent = df === 0 ? '✓ 相符' : (df > 0 ? '多 ' + df : '少 ' + (-df));
     };
-    $$('#lines input').forEach((inp) => {
+    $$('#lines input[data-i]').forEach((inp) => {
       const i = Number(inp.dataset.i);
       showDiff(i);
       inp.addEventListener('input', () => {
@@ -795,6 +862,15 @@
       });
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const nx = $(`#lines input[data-i="${i + 1}"]`); if (nx) nx.focus(); } });
     });
+    $$('#lines input[data-vi]').forEach((inp) => inp.addEventListener('input', () => {
+      const i = Number(inp.dataset.vi), x = d.lines[i], rows = vlist(x.code);
+      x.vc = x.vc || {};
+      const key = vLabel(rows[Number(inp.dataset.vk)]);
+      if (inp.value === '') delete x.vc[key]; else x.vc[key] = String(Math.max(0, parseInt(inp.value, 10) || 0));
+      if (!Object.keys(x.vc).length) { delete x.vc; return; }
+      const total = rows.reduce((a, v) => a + (x.vc[vLabel(v)] != null ? Number(x.vc[vLabel(v)]) : v[2]), 0);
+      const main = $(`#lines input[data-i="${i}"]`); main.value = total; main.dispatchEvent(new Event('input'));
+    }));
     bindCountRecog('cAdd', (codes, unknown) => {
       const fresh = codes.filter((c) => !d.lines.some((x) => x.code === c));
       fresh.forEach((c) => d.lines.push({ code: c, counted: '' }));
@@ -805,7 +881,9 @@
     $('#finishBtn').onclick = async () => {
       const lines = d.lines.filter((x) => x.counted !== '').map((x) => {
         const p = P[x.code], sys = p ? p.qty : 0;
-        return { code: x.code, name: p ? p.name : '', system: sys, counted: Number(x.counted), diff: Number(x.counted) - sys };
+        const ln = { code: x.code, name: p ? p.name : '', system: sys, counted: Number(x.counted), diff: Number(x.counted) - sys };
+        if (x.vc) ln.variants = vlist(x.code).filter((v) => x.vc[vLabel(v)] != null).map((v) => ({ label: vLabel(v), system: v[2], counted: Number(x.vc[vLabel(v)]) }));
+        return ln;
       });
       if (!lines.length) { toast('还没有填任何数量'); return; }
       const skipped = d.lines.length - lines.length;
@@ -821,14 +899,17 @@
   function countReportText(c) {
     const diffs = c.lines.filter((x) => x.diff !== 0);
     let t = `【库存清点】${fmtTime(c.date)}\n范围：${c.scopeLabel}\n清点人：${c.staff}\n共清点 ${c.lines.length} 款，${diffs.length ? diffs.length + ' 款有差异：' : '全部和系统相符 ✅'}\n`;
-    diffs.forEach((x) => { t += `- ${x.code} ${shortName(x.name)}：系统 ${x.system} / 实际 ${x.counted}（${x.diff > 0 ? '多' : '少'} ${Math.abs(x.diff)}）\n`; });
+    diffs.forEach((x) => {
+      t += `- ${x.code} ${shortName(x.name)}：系统 ${x.system} / 实际 ${x.counted}（${x.diff > 0 ? '多' : '少'} ${Math.abs(x.diff)}）\n`;
+      (x.variants || []).filter((v) => v.counted !== v.system).forEach((v) => { t += `    · ${v.label}：系统 ${v.system} / 实际 ${v.counted}\n`; });
+    });
     return t;
   }
   function viewCountReport(id) {
     const c = S.counts.find((x) => x.id === id);
     if (!c) { view(backLink() + '<div class="empty-state">找不到这次清点</div>'); return; }
     const diffs = c.lines.filter((x) => x.diff !== 0);
-    const row = (x) => `<tr><td><span class="code">${esc(x.code)}</span><div class="small muted">${esc(shortName(x.name))}</div></td><td class="num">${x.system}</td><td class="num">${x.counted}</td><td class="num"><span class="diff ${x.diff > 0 ? 'plus' : x.diff < 0 ? 'minus' : 'zero'}">${x.diff > 0 ? '+' : ''}${x.diff}</span></td></tr>`;
+    const row = (x) => `<tr><td><span class="code">${esc(x.code)}</span><div class="small muted">${esc(shortName(x.name))}</div></td><td class="num">${x.system}</td><td class="num">${x.counted}</td><td class="num"><span class="diff ${x.diff > 0 ? 'plus' : x.diff < 0 ? 'minus' : 'zero'}">${x.diff > 0 ? '+' : ''}${x.diff}</span></td></tr>${(x.variants || []).filter((v) => v.counted !== v.system).map((v) => `<tr class="vsub"><td class="small muted" colspan="2">└ ${esc(v.label)}</td><td class="num small">${v.counted}</td><td class="num small">${v.counted - v.system > 0 ? '+' : ''}${v.counted - v.system}</td></tr>`).join('')}`;
     view(`<a class="linkish" href="#count">‹ 清点</a>
       <h1>清点报告</h1>
       <div class="card"><b>${esc(c.scopeLabel)}</b><div class="small muted">${esc(fmtTime(c.date))} · ${esc(c.staff)} · Vend 数据时间 ${esc(fmtTime(c.vendAt))}</div>
@@ -986,7 +1067,7 @@
           <li>点 <b>Export（导出）</b>，下载 Excel（.xlsx）文件</li>
         </ol>
         <b>第二步：导入到这里</b>
-        <div class="small muted">选择刚下载的文件。表格里要有 <b>Tag</b>（款号）和 <b>Current Inventory</b>（当前库存）两列。</div>
+        <div class="small muted">选择刚下载的文件。表格里要有 <b>Tag</b>（款号）和 <b>Current Inventory</b>（当前库存）两列。<br>想精确到<b>颜色和尺码</b>：在 Lightspeed 选「Inventory → product variant」那个版本的报表（第一列叫 SKU Name，写着 款名 / 颜色 / 尺码），导入后每个款都会显示颜色 × 尺码表。</div>
         <input type="file" id="file" accept=".xlsx,.xls,.csv" style="margin-top:4px">
         <div id="impResult" style="margin-top:10px">${importResultHtml}</div></div>
       <div class="small muted">上次导入：${esc(fmtTime(S.vendImportedAt)) || '—'}。导入只更新库存数字，不会改动货位。导入后所有设备都会看到新数字。</div>`);
@@ -998,8 +1079,10 @@
       try {
         const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
-        const products = parseVendRows(rows);
+        const vr = parseVariantRows(rows);
+        const products = vr ? vr.products : parseVendRows(rows);
         if (!products.length) throw new Error('没找到 Tag / Current Inventory 列');
+        if (vr) { S.variants = vr.list; S.variantsAt = nowISO(); putVariants(); }
         const before = {}; S.products.forEach((p) => { before[p.code] = p.qty; });
         const changed = products.filter((p) => before[p.code] !== undefined && before[p.code] !== p.qty);
         const added = products.filter((p) => before[p.code] === undefined);
@@ -1007,7 +1090,8 @@
         putProducts(); putMeta();
         addLog('import', { file: file.name, n: products.length, changed: changed.length, added: added.length });
         rebuildIndex();
-        importResultHtml = `<div class="pill ok">导入成功</div>
+        importResultHtml = `<div class="pill ok">导入成功${vr ? '（含颜色和尺码）' : ''}</div>
+          ${vr ? `<p class="small">颜色尺码 ${Object.values(vr.list).reduce((a, l) => a + l.length, 0)} 条，已更新到每个款。</p>` : ''}
           <p class="small">共 ${products.length} 款；库存变化 ${changed.length} 款；新款 ${added.length} 款。</p>
           ${added.length ? `<p class="small"><b>新款（记得登记货位）：</b>${added.map((p) => `<a ${goAttr('product', p.code)} class="code">${esc(p.code)}</a>`).join(' · ')}</p>` : ''}
           ${changed.length ? `<details><summary class="small">查看变化</summary><table class="list small">${changed.map((p) => `<tr><td class="code">${esc(p.code)}</td><td>${before[p.code]} → <b>${p.qty}</b></td></tr>`).join('')}</table></details>` : ''}`;
@@ -1018,6 +1102,34 @@
         $('#impResult').innerHTML = importResultHtml;
       }
     };
+  }
+  // variant report: first column "SKU Name" = "Style name / Colour / Size"
+  function parseVariantRows(rows) {
+    let h = -1, cols = {};
+    for (let i = 0; i < Math.min(rows.length, 15); i++) {
+      const r = rows[i].map((x) => String(x).trim().toLowerCase());
+      const tag = r.findIndex((x) => x === 'tag' || x === 'tags' || x === 'sku');
+      const curI = r.findIndex((x) => x === 'current inventory');
+      const nm = r.findIndex((x) => x === 'sku name' || x === 'variant name' || x === 'variant');
+      if (tag >= 0 && curI >= 0 && nm >= 0) { h = i; cols = { tag, cur: curI, nm, closing: r.findIndex((x) => x === 'closing inventory') }; break; }
+    }
+    if (h < 0) return null;
+    const list = {}, names = {};
+    rows.slice(h + 1).forEach((r) => {
+      const code = norm(r[cols.tag]); const q = parseInt(r[cols.cur], 10) || 0;
+      if (!code) return;
+      const parts = String(r[cols.nm]).split(' / ').map((x) => x.trim());
+      const size = parts.length >= 2 ? parts[parts.length - 1] : '';
+      const color = parts.length >= 3 ? parts.slice(1, -1).join('/') : '';
+      if (!names[code]) names[code] = parts[0];
+      if (q <= 0) return;
+      (list[code] = list[code] || []).push([color, size, q]);
+    });
+    const products = Object.keys(names).map((c) => {
+      const old = S.products.find((p) => p.code === c);
+      return { code: c, name: old ? old.name : names[c], qty: (list[c] || []).reduce((a, v) => a + v[2], 0), closing: 0, lastReceived: old ? old.lastReceived || '' : '' };
+    });
+    return { products, list };
   }
   function parseVendRows(rows) {
     let h = -1, cols = {};
@@ -1047,7 +1159,7 @@
   }
 
   // ---------------------------------------------------------------- change log
-  const LOG_TYPES = { move: '移动', add: '添加', remove: '删除', note: '改备注', rename: '改名', newloc: '新位置', delloc: '删位置', count: '清点', return: '退库登记', 'return-sent': '退库寄出', 'return-del': '删退库', import: '导入 Vend', 'stock-in': '到货入库', 'stock-out': '退货出库', 'stock-undo': '撤销库存变动', move: '库存变动', layby: 'Layby 登记', 'layby-notified': 'Layby 已通知', 'layby-collected': 'Layby 已取货', 'note-add': '新便签', sync: '同步', layout: '调整地图', 'shelf-size': '货架格数', capacity: '容量设置' };
+  const LOG_TYPES = { move: '移动', add: '添加', remove: '删除', note: '改备注', rename: '改名', newloc: '新位置', delloc: '删位置', count: '清点', return: '退库登记', 'return-sent': '退库寄出', 'return-del': '删退库', import: '导入 Vend', 'stock-in': '到货入库', 'stock-out': '退货出库', 'stock-undo': '撤销库存变动', move: '库存变动', layby: 'Layby 登记', 'layby-notified': 'Layby 已通知', 'layby-collected': 'Layby 已收货', 'layby-edit': 'Layby 修改', 'layby-undo': 'Layby 撤回', 'layby-held': 'Layby 留货', 'note-add': '新便签', sync: '同步', layout: '调整地图', 'shelf-size': '货架格数', capacity: '容量设置' };
   function logText(g) {
     const d = g.detail || {};
     switch (g.type) {
@@ -1070,6 +1182,9 @@
       case 'note-add': return `新便签：${d.text}`;
       case 'sync': return `从${d.from}同步（${fmtTime(d.at)} 导出）`;
       case 'layby': return `登记 layby：${d.name} 等 ${d.code}`;
+      case 'layby-edit': return `修改 layby：${d.name}（${d.code}）`;
+      case 'layby-undo': return `撤回 layby 修改：${d.name}`;
+      case 'layby-held': return `layby 已留出：${d.name} 的 ${d.code}`;
       case 'layby-notified': return `已通知 ${d.name}（${d.code}）`;
       case 'layby-collected': return `${d.name} 已取货（${d.code}）`;
       case 'layout': return `调整了${d.area}布局`;
@@ -1110,6 +1225,12 @@
         <label class="field">我的名字（这台设备上的修改会记在这个名字下）<input id="staff" type="text" value="${esc(S.staff)}" placeholder="例如 Rebecca"></label>
         <label class="field">库存偏低提醒：少于等于几件<input id="low" type="number" min="1" value="${S.lowStock}"></label>
         <button class="btn primary" id="saveSet">保存设置</button></div>
+      <div class="card stack"><b>⏰ 每日提醒</b>
+        <div class="small muted">页面打开时会在顶部弹出提醒；想在手机锁屏时也提醒，点下面「加到手机日历」。</div>
+        ${(() => { const c = remindCfg(); return `<div class="row" style="align-items:center"><label class="row small grow"><input type="checkbox" id="rmOrderOn" style="width:auto" ${c.order.on ? 'checked' : ''}> 🛒 订货提醒</label><input id="rmOrderT" type="time" value="${c.order.time}" style="width:110px"></div>
+        <div class="row" style="align-items:center"><label class="row small grow"><input type="checkbox" id="rmNotesOn" style="width:auto" ${c.notes.on ? 'checked' : ''}> 📝 便签提醒</label><input id="rmNotesT" type="time" value="${c.notes.time}" style="width:110px"></div>`; })()}
+        <div class="row"><button class="btn small" id="rmNotif">🔔 允许浏览器通知</button><button class="btn small primary" id="rmIcs">📅 加到手机日历（每天重复）</button></div>
+        <div class="small muted" id="rmMsg"></div></div>
       <div class="card small"><b>数据存在哪里？</b><div class="muted" style="margin-top:4px">${LOCAL
         ? '这是网页版（GitHub）：所有数据只存在这台设备的浏览器里，不会和别的手机或 Claude 版同步。换手机前先「下载完整备份」，在新设备上「从备份恢复」。照片很占空间，建议定期删除旧照片。'
         : '货位、清点、退库和修改记录都存在 Claude 里，你的手机和电脑打开都是同一份，改了马上同步。只有正在进行中的清点草稿存在当前设备上。'}</div>
@@ -1142,6 +1263,10 @@
         db.restore(data.store); toast('已恢复');
       } catch (err) { toast('恢复失败：' + (err.message || err)); }
     };
+    const saveRemind = () => lsSet('ugg-remind', JSON.stringify({ order: { on: $('#rmOrderOn').checked, time: $('#rmOrderT').value || '17:00' }, notes: { on: $('#rmNotesOn').checked, time: $('#rmNotesT').value || '17:30' } }));
+    ['#rmOrderOn', '#rmOrderT', '#rmNotesOn', '#rmNotesT'].forEach((q) => $(q).addEventListener('change', () => { saveRemind(); $('#rmMsg').textContent = '已保存'; }));
+    $('#rmNotif').onclick = async () => { try { const r = await Notification.requestPermission(); $('#rmMsg').textContent = r === 'granted' ? '已允许通知（页面打开时才会弹）' : '没有允许；仍会在页面顶部提醒'; } catch (e) { $('#rmMsg').textContent = '这个浏览器不支持通知；仍会在页面顶部提醒'; } };
+    $('#rmIcs').onclick = () => { saveRemind(); saveFile('UGG每日提醒.ics', remindIcs()); $('#rmMsg').textContent = '下载后打开这个文件，选「添加到日历」，每天会在设定时间响铃提醒。'; };
     $('#saveSet').onclick = () => {
       S.staff = $('#staff').value.trim(); lsSet(LS_STAFF, S.staff);
       const low = Math.max(1, parseInt($('#low').value, 10) || 3);
@@ -1155,7 +1280,7 @@
   function syncSnapshot() {
     return {
       format: 'ugg-sync-v1', from: LOCAL ? '网页版' : 'Claude版', at: nowISO(),
-      locations: S.locations, products: S.products,
+      locations: S.locations, products: S.products, variants: S.variants, variantsAt: S.variantsAt,
       meta: { unitNames: S.unitNames, lowStock: S.lowStock, vendImportedAt: S.vendImportedAt, cap: S.cap },
       layout: { storeroom: S.layout.storeroom || {}, store: S.layout.store || {}, labels: S.layout.labels || null, room: S.layout.room || null },
       notes: S.notes, laybys: S.laybys, returns: S.returns, imports: S.imports, counts: S.counts,
@@ -1169,6 +1294,7 @@
     S.products = d.products.slice(); S.vendImportedAt = d.meta.vendImportedAt || S.vendImportedAt;
     S.unitNames = d.meta.unitNames || {}; S.lowStock = d.meta.lowStock || 3; S.cap = Object.assign({}, S.cap, d.meta.cap || {});
     S.layout = Object.assign({ storeroom: {}, store: {} }, d.layout || {});
+    if (d.variants) { S.variants = d.variants; S.variantsAt = d.variantsAt || S.variantsAt; putVariants(); }
     putProducts(); putMeta(); putLayout();
     // merge the record lists by id (newer copy wins)
     let extra = 0;
@@ -1463,6 +1589,7 @@
   const lineDelta = (r, x) => x.delta != null ? x.delta : moveMeta(r.type).sign * x.qty;
   function applyMove(type, lines, source, note, extra) {
     const rec = Object.assign({ id: uid(), type, date: nowISO(), staff: S.staff, source: source || '手动登记', note: note || '', lines: [], undone: false }, extra || {});
+    let vChanged = false;
     lines.forEach((x) => {
       let p = P[x.code];
       if (!p) {
@@ -1473,18 +1600,22 @@
       const before = p.qty;
       p.qty = before + x.delta;
       if (type === 'arrival') p.lastReceived = fmtTime(nowISO());
-      rec.lines.push({ code: x.code, qty: x.qty, delta: x.delta, size: x.size || '', before, after: p.qty });
+      const line = { code: x.code, qty: x.qty, delta: x.delta, size: x.size || '', before, after: p.qty };
+      const vv = findVariant(x.code, [x.size, x.color, x.name].filter(Boolean).join(' '));
+      if (vv) { bumpVariant(x.code, vv[0], vv[1], x.delta); line.vk = [vv[0], vv[1]]; vChanged = true; }
+      rec.lines.push(line);
     });
     if (!rec.lines.length) return null;
-    S.imports.unshift(rec); putImport(rec); putProducts();
+    S.imports.unshift(rec); putImport(rec); putProducts(); if (vChanged) putVariants();
     addLog('move', { kind: type, source: rec.source, n: rec.lines.length, total: rec.lines.reduce((a, x) => a + Math.abs(x.delta), 0), code: rec.lines.length === 1 ? rec.lines[0].code : undefined });
     rebuildIndex();
     if (type === 'arrival') setTimeout(() => notifyLaybyArrivals(rec.lines.map((x) => x.code)), 2700);
     return rec;
   }
   function undoMove(r) {
-    r.lines.forEach((x) => { const p = P[x.code]; if (p) p.qty -= lineDelta(r, x); });
-    r.undone = true; putImport(r); putProducts();
+    let vChanged = false;
+    r.lines.forEach((x) => { const p = P[x.code]; if (p) p.qty -= lineDelta(r, x); if (x.vk) { bumpVariant(x.code, x.vk[0], x.vk[1], -lineDelta(r, x)); vChanged = true; } });
+    r.undone = true; putImport(r); putProducts(); if (vChanged) putVariants();
     addLog('stock-undo', { source: r.source || moveMeta(r.type).zh, n: r.lines.length });
     rebuildIndex();
   }
@@ -1522,7 +1653,7 @@
     let form = '';
     if (moveType) {
       const codeRow = (id, label) => `<label class="field">${label}<input id="${id}" type="text" autocapitalize="characters" placeholder="例如 AS2115"></label><div id="${id}H" class="small muted"></div>`;
-      const common = `<div class="row"><label class="field grow">尺码 / 颜色<input id="mSize" type="text" placeholder="例如 38 CHOC"></label><label class="field" style="width:90px">数量<input id="mQty" type="number" min="1" value="1" inputmode="numeric"></label></div>`;
+      const common = `<div class="row"><label class="field grow">颜色 / 尺码<input id="mSize" type="text" list="mSizeList" placeholder="例如 chestnut 38"><datalist id="mSizeList"></datalist></label><label class="field" style="width:90px">数量<input id="mQty" type="number" min="1" value="1" inputmode="numeric"></label></div>`;
       if (moveType === 'arrival') form = `${codeRow('mCode', '款号')}${common}<div class="small muted">很多款一起到货时，用上面的「一键导入到货单文件」更快。</div>`;
       if (moveType === 'sale') form = `<div class="seg"><button data-sm="sale" class="${saleMode === 'sale' ? 'on' : ''}">卖出（−）</button><button data-sm="custreturn" class="${saleMode === 'custreturn' ? 'on' : ''}">顾客退货（+）</button><button data-sm="exchange" class="${saleMode === 'exchange' ? 'on' : ''}">换货</button></div>
         ${saleMode === 'exchange' ? `${codeRow('mCode', '顾客退回来的款（库存 +1）')}<label class="field">尺码<input id="mSize" type="text"></label>${codeRow('mCode2', '顾客换走的款（库存 −1）')}<label class="field">尺码<input id="mSize2" type="text"></label>` : codeRow('mCode', '款号') + common}
@@ -1562,7 +1693,20 @@
     $$('[data-mt]').forEach((b) => b.onclick = () => { moveType = moveType === b.dataset.mt ? '' : b.dataset.mt; render(false); });
     $$('[data-sm]').forEach((b) => b.onclick = () => { saleMode = b.dataset.sm; render(false); });
     $$('[data-rm]').forEach((b) => b.onclick = () => { retMode = b.dataset.rm; render(false); });
-    if ($('#mCode')) codeHint($('#mCode'), $('#mCodeH'));
+    if ($('#mCode')) {
+      codeHint($('#mCode'), $('#mCodeH'));
+      const vhint = () => {
+        const c = resolveCode($('#mCode').value), sz = $('#mSize');
+        const dl = $('#mSizeList'); if (dl) dl.innerHTML = vlist(c).map((v) => `<option value="${esc(vLabel(v).replace(' / ', ' '))}">${v[2]} 双</option>`).join('');
+        let h = $('#mVarH');
+        if (!h && sz) { h = document.createElement('div'); h.id = 'mVarH'; h.className = 'small'; sz.closest('.row').after(h); }
+        if (!h) return;
+        if (!vlist(c).length) { h.textContent = ''; return; }
+        const v = findVariant(c, sz.value);
+        h.innerHTML = !sz.value ? '<span class="muted">填颜色和尺码，库存会精确到这一格；不填只改总数</span>' : v ? `✔ ${esc(vLabel(v))}（现有 ${v[2]}）` : '<span style="color:var(--warn)">没匹配到具体颜色尺码，只会改总数</span>';
+      };
+      $('#mCode').addEventListener('input', vhint); if ($('#mSize')) $('#mSize').addEventListener('input', vhint); vhint();
+    }
     if ($('#mCode2')) codeHint($('#mCode2'), $('#mCode2H'));
     bindUndo();
     if ($('#mGo')) $('#mGo').onclick = async () => {
@@ -1719,60 +1863,261 @@
     bindUndo();
   }
 
-  // ================================================================ Layby
-  const putLayby = (l) => write('laybys/' + l.id, () => db.doc('laybys/' + l.id).set(strip(l)));
+  // ================================================================ Layby (own tab)
+  // order = { id, name, phone, orderDate, items:[{code,color,size,qty,held}], note, status: waiting|notified|collected, hist:[snapshots for 撤回] }
+  function normLayby(l) {
+    const o = Object.assign({}, l);
+    if (!Array.isArray(o.items)) o.items = o.code ? [{ code: o.code, color: '', size: o.size || '', qty: o.qty || 1 }] : [];
+    o.orderDate = o.orderDate || (o.createdAt ? fmtTime(o.createdAt).slice(0, 10) : today());
+    return o;
+  }
+  const putLayby = (l) => write('laybys/' + l.id, () => { const c = strip(normLayby(l)); delete c.code; delete c.size; delete c.qty; return db.doc('laybys/' + l.id).set(c); });
   const delLayby = (id) => write('laybys/' + id, () => db.doc('laybys/' + id).delete());
-  const laybyReady = (l) => l.status === 'waiting' && P[l.code] && P[l.code].qty > 0;
+  const LY_ST = { waiting: '等货中', notified: '已通知', collected: '已收货' };
+  const dow = (d) => new Date(d + 'T12:00:00').getDay();
+  const isRecvDay = (d) => [1, 3, 5].includes(dow(d));
+  function prevRecvDay(date) { let d = dateAdd(date, -1); for (let i = 0; i < 7 && !isRecvDay(d); i++) d = dateAdd(d, -1); return d; }
+  const itemText = (it) => [it.color, it.size && 'size ' + it.size].filter(Boolean).join(', ');
+  const itemShort = (it) => `${it.code}${itemText(it) ? ' ' + itemText(it) : ''} × ${it.qty || 1}`;
+  // did a stock-in for this item come in after the order was booked?
+  function itemArrival(l, it, arr) {
+    const code = resolveCode(it.code);
+    return arr.find((a) => {
+      if (a.code !== code || a.date < l.orderDate) return false;
+      if (a.vk) return (!it.color || String(a.vk[0]).toLowerCase() === String(it.color).toLowerCase()) && (!it.size || sizeKey(a.vk[1]) === sizeKey(it.size));
+      if (it.size && a.size) return String(a.size).toLowerCase().split(/[\s,/]+/).map(sizeKey).includes(sizeKey(it.size));
+      return true;
+    });
+  }
+  const arrivalList = () => S.imports.filter(isArrival).flatMap((r) => r.lines.filter((x) => lineDelta(r, x) > 0).map((x) => Object.assign({ date: fmtTime(r.date).slice(0, 10) }, x)));
+  function itemStock(it) {
+    const c = resolveCode(it.code);
+    if (it.color || it.size) { const v = findVariant(c, [it.color, it.size].filter(Boolean).join(' ')); if (v) return v[2]; if (vlist(c).length) return 0; }
+    return P[c] ? P[c].qty : null;
+  }
+  function lyAlerts() {
+    const arr = arrivalList(), hold = [];
+    S.laybys.filter((l) => l.status === 'waiting').forEach((l) => l.items.forEach((it, i) => { if (itemArrival(l, it, arr)) hold.push({ l, it, i }); }));
+    const since = prevRecvDay(today());
+    const fresh = S.laybys.filter((l) => l.status === 'waiting' && fmtTime(l.createdAt).slice(0, 10) >= since);
+    return { hold, fresh, pendingHold: hold.filter((h) => !h.it.held) };
+  }
   function notifyLaybyArrivals(codes) {
-    const n = S.laybys.filter((l) => l.status === 'waiting' && codes.includes(l.code)).length;
-    if (n) toast(`🧾 有 ${n} 位 layby 客人等的货到了，记得通知`);
+    const a = lyAlerts().pendingHold.filter((h) => codes.includes(resolveCode(h.it.code)));
+    if (a.length) toast(`🧾 有 ${a.length} 件货是 layby 客人订的，请单独留出（Layby 页有清单）`);
   }
   function laybyMsg(l) {
-    return `您好 ${l.name}，您预留的 ${l.code}${l.size ? ' ' + l.size + ' 码' : ''} 已经到店，欢迎随时来取。\nHi ${l.name}, your layby item ${l.code}${l.size ? ' (size ' + l.size + ')' : ''} has arrived. You're welcome to pick it up any time.`;
+    const arr = arrivalList();
+    let its = l.items.filter((it) => itemArrival(l, it, arr) || it.held);
+    if (!its.length) its = l.items;
+    const lines = its.map((it) => {
+      const p = P[resolveCode(it.code)];
+      return `- ${[it.code, p ? shortName(p.name) : ''].filter(Boolean).join(' ')}${itemText(it) ? ' (' + itemText(it) + ')' : ''}${(it.qty || 1) > 1 ? ' x ' + it.qty : ''}`;
+    });
+    const many = its.reduce((a, it) => a + (it.qty || 1), 0) > 1;
+    return `Hi ${l.name},\n\nGood news! Your layby ${many ? 'items have' : 'item has'} arrived at UGG Express:\n${lines.join('\n')}\n\nYou're welcome to come in and collect ${many ? 'them' : 'it'} any time.\n\nWarm regards,\nUGG Express`;
   }
-  let laybyFilter = 'waiting';
+  const lySnap = (l) => JSON.parse(JSON.stringify({ name: l.name, phone: l.phone, orderDate: l.orderDate, note: l.note, items: l.items, status: l.status, notifiedAt: l.notifiedAt || '', notifiedBy: l.notifiedBy || '', collectedAt: l.collectedAt || '', collectedBy: l.collectedBy || '' }));
+  function lyPushHist(l, what) { l.hist = (l.hist || []).slice(-7); l.hist.push({ t: nowISO(), by: S.staff, what, snap: lySnap(l) }); }
+  let laybyFilter = 'active', laybySort = 'asc';
+  function lyFiltered() {
+    let list = S.laybys.filter((l) => laybyFilter === 'all' || (laybyFilter === 'active' ? l.status !== 'collected' : l.status === laybyFilter));
+    list = list.slice().sort((a, b) => String(a.orderDate).localeCompare(String(b.orderDate)) || String(a.createdAt).localeCompare(String(b.createdAt)));
+    return laybySort === 'desc' ? list.reverse() : list;
+  }
+  function lyRows(list) {
+    const rows = [['订单日期', '状态', '客人', '电话', '款号', '商品', '颜色', '尺码', '数量', '备注', '通知时间', '收货时间', '登记人']];
+    list.forEach((l) => (l.items.length ? l.items : [{ code: '', qty: '' }]).forEach((it) => rows.push([l.orderDate, LY_ST[l.status], l.name, l.phone || '', it.code, P[resolveCode(it.code)] ? P[resolveCode(it.code)].name : '', it.color || '', it.size || '', it.qty || 1, l.note || '', l.notifiedAt ? fmtTime(l.notifiedAt) : '', l.collectedAt ? fmtTime(l.collectedAt) : '', l.staff || ''])));
+    return rows;
+  }
+  function printHtml(title, bodyHtml, landscape) {
+    const old = $('#printArea'); if (old) old.remove();
+    const div = document.createElement('div'); div.id = 'printArea'; div.innerHTML = `${title ? `<h2>${esc(title)}</h2>` : ''}${bodyHtml}`;
+    document.body.appendChild(div);
+    const pg = document.createElement('style'); pg.textContent = `@page { size: ${landscape ? 'landscape' : 'portrait'}; margin: 10mm; }`; document.head.appendChild(pg);
+    let ok = true;
+    try { window.print(); } catch (e) { ok = false; }
+    setTimeout(() => { div.remove(); pg.remove(); }, 1500);
+    return ok;
+  }
+  function lyCard(l, arr) {
+    const hist = (l.hist || []).length;
+    const items = l.items.map((it, i) => {
+      const arrived = l.status === 'waiting' && itemArrival(l, it, arr);
+      const st = itemStock(it);
+      return `<div class="ly-item ${arrived && !it.held ? 'hold' : ''} ${it.held ? 'held' : ''}">
+        <a ${goAttr('product', resolveCode(it.code))} class="code">${esc(it.code)}</a> ${esc(itemText(it))} <b>× ${it.qty || 1}</b>
+        <span class="small muted">${esc(shortName(P[resolveCode(it.code)] ? P[resolveCode(it.code)].name : ''))}${st != null ? ` · 库存 ${st}` : ''}</span>
+        ${l.status === 'waiting' ? (arrived ? (it.held ? `<span class="pill ok">✓ 已留出</span> <button class="linkish small" data-lyheld="${esc(l.id)}|${i}">取消</button>` : `<span class="pill warn">⚑ 到货·请单独留出</span> <button class="btn small primary" data-lyheld="${esc(l.id)}|${i}">已留出</button>`) : it.held ? `<span class="pill ok">✓ 已留出</span>` : '') : ''}
+      </div>`;
+    }).join('');
+    const needHold = l.status === 'waiting' && l.items.some((it, i) => itemArrival(l, it, arr) && !it.held);
+    return `<div class="card ly-card ${needHold ? 'ly-hot' : ''}">
+      <div class="row between"><div><b>${esc(l.name)}</b> <span class="small">${esc(l.phone || '')}</span>
+        <div class="small muted">📅 ${esc(l.orderDate)} · ${esc(l.staff || '')}${l.note ? ' · ' + esc(l.note) : ''}</div></div>
+        <span class="pill ${l.status === 'waiting' ? (needHold ? 'warn' : 'grey') : l.status === 'notified' ? 'ok' : 'grey'}">${needHold ? '⚑ 有货到了' : LY_ST[l.status]}${needHold ? '' : ''}</span></div>
+      <div class="ly-items">${items || '<div class="muted small">没有货品</div>'}</div>
+      ${l.notifiedAt ? `<div class="small muted">已通知：${esc(fmtTime(l.notifiedAt))} · ${esc(l.notifiedBy || '')}</div>` : ''}${l.collectedAt ? `<div class="small muted">已收货：${esc(fmtTime(l.collectedAt))} · ${esc(l.collectedBy || '')}</div>` : ''}
+      <div class="row" style="margin-top:8px;flex-wrap:wrap">
+        ${l.status !== 'collected' ? `<button class="btn small" data-lymsg="${esc(l.id)}">📋 复制通知短信</button>` : ''}
+        ${l.status === 'waiting' ? `<button class="btn small primary" data-lyn="${esc(l.id)}">已通知</button>` : ''}
+        ${l.status === 'notified' ? `<button class="btn small primary" data-lyc="${esc(l.id)}">已收货</button>` : ''}
+        <a class="btn small" ${goAttr('laybyEdit', l.id)}>✏️ 编辑</a>
+        ${hist ? `<button class="btn small" data-lyundo="${esc(l.id)}">↩ 撤回上次修改</button>` : ''}
+        <button class="btn small danger" data-lyd="${esc(l.id)}">删除</button></div></div>`;
+  }
   function viewLayby() {
-    const arrivedToday = new Set(arrivalsOn(today()).flatMap((r) => r.lines.map((x) => x.code)));
-    const list = S.laybys.filter((l) => laybyFilter === 'all' || l.status === laybyFilter);
-    const ST = { waiting: '等货中', notified: '已通知', collected: '已取货' };
-    view(`${backLink()}
-      <h1>🧾 Layby 客人</h1>
-      <div class="card stack"><b>登记一位 layby 客人</b>
-        <div class="row"><label class="field grow">名字<input id="lyName" type="text"></label><label class="field grow">电话<input id="lyPhone" type="tel" inputmode="tel"></label></div>
-        <label class="field">款号<input id="lyCode" type="text" autocapitalize="characters" placeholder="例如 AS2115"></label><div id="lyCodeH" class="small muted"></div>
-        <div class="row"><label class="field grow">尺码 / 颜色<input id="lySize" type="text"></label><label class="field" style="width:90px">数量<input id="lyQty" type="number" min="1" value="1"></label></div>
-        <label class="field">备注<input id="lyNote" type="text" placeholder="例如 已付订金 $50"></label>
-        <button class="btn primary" id="lyAdd">＋ 登记</button></div>
+    const arr = arrivalList(), al = lyAlerts(), list = lyFiltered(), td = today();
+    const cnt = (s) => S.laybys.filter((l) => l.status === s).length;
+    const holdCards = al.hold.filter((h) => !h.it.held);
+    view(`<div class="row between"><h1 style="margin:0">🧾 Layby</h1><a class="btn primary" ${goAttr('laybyEdit', 'new')}>＋ 新 layby</a></div>
+      ${isRecvDay(td) ? `<div class="card ly-banner">📥 <b>今天是收货日</b>（${WEEK[dow(td)]}）：${al.fresh.length ? `自上个收货日起有 <b>${al.fresh.length}</b> 个新 layby；` : '没有新的 layby；'}${holdCards.length ? `<b>${holdCards.length}</b> 件到货要单独留出。` : '暂时没有需要留出的到货。'}</div>` : (al.fresh.length ? `<div class="card ly-banner small">自上个收货日（${esc(prevRecvDay(td))}）起新增 ${al.fresh.length} 个 layby</div>` : '')}
+      ${holdCards.length ? `<div class="card ly-hotbox"><b>⚑ 需要单独留出的 layby 货（${holdCards.length}）</b>
+        ${holdCards.map((h) => `<div class="item-line"><div class="grow"><a ${goAttr('product', resolveCode(h.it.code))} class="code">${esc(h.it.code)}</a> ${esc(itemText(h.it))} × ${h.it.qty || 1}<div class="small muted">${esc(h.l.name)} · 订于 ${esc(h.l.orderDate)}${(codeLocs[resolveCode(h.it.code)] || []).length ? ' · ' + codeLocs[resolveCode(h.it.code)].map((id) => esc(locLabel(locById[id]))).join('、') : ''}</div></div><button class="btn small primary" data-lyheld="${esc(h.l.id)}|${h.i}">已留出</button></div>`).join('')}</div>` : ''}
       <div class="seg">
-        <button data-lf="waiting" class="${laybyFilter === 'waiting' ? 'on' : ''}">等货中 (${S.laybys.filter((l) => l.status === 'waiting').length})</button>
-        <button data-lf="notified" class="${laybyFilter === 'notified' ? 'on' : ''}">已通知</button>
-        <button data-lf="collected" class="${laybyFilter === 'collected' ? 'on' : ''}">已取货</button>
-        <button data-lf="all" class="${laybyFilter === 'all' ? 'on' : ''}">全部</button></div>
-      ${list.map((l) => `<div class="card">
-        <div class="row between"><div><b>${esc(l.name)}</b> <span class="small">${esc(l.phone || '')}</span>
-          <div><a ${goAttr('product', l.code)} class="code">${esc(l.code)}</a> ${esc(l.size || '')} × ${l.qty || 1} <span class="small muted">${esc(shortName(P[l.code] ? P[l.code].name : ''))}</span></div>
-          <div class="small muted">${esc(fmtTime(l.createdAt))} · ${esc(l.staff)}${l.note ? ' · ' + esc(l.note) : ''}${l.notifiedAt ? '<br>通知于 ' + esc(fmtTime(l.notifiedAt)) + ' · ' + esc(l.notifiedBy) : ''}</div></div>
-          <span class="pill ${l.status === 'waiting' ? (arrivedToday.has(l.code) || laybyReady(l) ? 'warn' : 'grey') : l.status === 'notified' ? 'ok' : 'grey'}">${l.status === 'waiting' && arrivedToday.has(l.code) ? '今天到货了！' : l.status === 'waiting' && laybyReady(l) ? '有库存' : ST[l.status]}</span></div>
-        <div class="row" style="margin-top:6px">
-          ${l.status === 'waiting' ? `<button class="btn small" data-lymsg="${esc(l.id)}">📋 复制通知短信</button><button class="btn small primary" data-lyn="${esc(l.id)}">已通知</button>` : ''}
-          ${l.status === 'notified' ? `<button class="btn small primary" data-lyc="${esc(l.id)}">已取货</button>` : ''}
-          <button class="btn small danger" data-lyd="${esc(l.id)}">删除</button></div></div>`).join('') || '<div class="empty-state">没有记录</div>'}
-      <p class="small muted">客人的名字和电话会保存在这个应用里，能打开这个页面的人都能看到。</p>`);
-    codeHint($('#lyCode'), $('#lyCodeH'));
+        <button data-lf="active" class="${laybyFilter === 'active' ? 'on' : ''}">进行中 (${cnt('waiting') + cnt('notified')})</button>
+        <button data-lf="waiting" class="${laybyFilter === 'waiting' ? 'on' : ''}">等货 (${cnt('waiting')})</button>
+        <button data-lf="notified" class="${laybyFilter === 'notified' ? 'on' : ''}">已通知 (${cnt('notified')})</button>
+        <button data-lf="collected" class="${laybyFilter === 'collected' ? 'on' : ''}">历史·已收货 (${cnt('collected')})</button></div>
+      <div class="row between" style="margin:8px 0"><button class="btn small" id="lySort">按日期：${laybySort === 'asc' ? '旧 → 新 ⇅' : '新 → 旧 ⇅'}</button>
+        <div class="row"><button class="btn small" id="lyCsv">⬇️ 下载表格</button><button class="btn small" id="lyPrint">🖨️ 打印</button></div></div>
+      ${list.map((l) => lyCard(l, arr)).join('') || '<div class="empty-state">这里没有记录</div>'}
+      <p class="small muted">客人的名字和电话会保存在这个应用里，能打开这个页面的人都能看到。「已收货」的订单才会进入历史。</p>`);
     $$('[data-lf]').forEach((b) => b.onclick = () => { laybyFilter = b.dataset.lf; render(false); });
-    $('#lyAdd').onclick = async () => {
-      const name = $('#lyName').value.trim(), code = resolveCode($('#lyCode').value);
-      if (!name || !code) { toast('请填写名字和款号'); return; }
-      if (!await ensureStaff()) return;
-      const l = { id: uid(), name, phone: $('#lyPhone').value.trim(), code, size: $('#lySize').value.trim(), qty: parseInt($('#lyQty').value, 10) || 1, note: $('#lyNote').value.trim(), status: 'waiting', createdAt: nowISO(), staff: S.staff };
-      S.laybys.unshift(l); putLayby(l); addLog('layby', { code, name });
-      toast('已登记'); render(false);
+    $('#lySort').onclick = () => { laybySort = laybySort === 'asc' ? 'desc' : 'asc'; render(false); };
+    $('#lyCsv').onclick = () => saveFile(`layby_${LY_ST[laybyFilter] || (laybyFilter === 'active' ? '进行中' : '全部')}_${today()}.csv`, toCSV(lyRows(list)));
+    $('#lyPrint').onclick = () => {
+      const rows = lyRows(list);
+      const html = `<table class="ptable"><thead><tr>${['订单日期', '状态', '客人', '电话', '货品', '备注'].map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${list.map((l) => `<tr><td>${esc(l.orderDate)}</td><td>${esc(LY_ST[l.status])}${l.notifiedAt ? '<br>通知 ' + esc(fmtTime(l.notifiedAt).slice(0, 10)) : ''}</td><td>${esc(l.name)}</td><td>${esc(l.phone || '')}</td><td>${l.items.map((it) => esc(itemShort(it) + (P[resolveCode(it.code)] ? ' ' + shortName(P[resolveCode(it.code)].name) : ''))).join('<br>')}</td><td>${esc(l.note || '')}</td></tr>`).join('')}</tbody></table>`;
+      if (!printHtml(`UGG Express Layby（${rows.length - 1} 行 · ${td}）`, html)) toast('这里不能直接打印，请用「下载表格」');
     };
     const find = (id) => S.laybys.find((x) => x.id === id);
     $$('[data-lymsg]').forEach((b) => b.onclick = () => copyText(laybyMsg(find(b.dataset.lymsg)), true));
-    $$('[data-lyn]').forEach((b) => b.onclick = async () => { if (!await ensureStaff()) return; const l = find(b.dataset.lyn); l.status = 'notified'; l.notifiedAt = nowISO(); l.notifiedBy = S.staff; putLayby(l); addLog('layby-notified', { code: l.code, name: l.name }); render(false); });
-    $$('[data-lyc]').forEach((b) => b.onclick = async () => { if (!await ensureStaff()) return; const l = find(b.dataset.lyc); l.status = 'collected'; l.collectedAt = nowISO(); putLayby(l); addLog('layby-collected', { code: l.code, name: l.name }); render(false); });
+    $$('[data-lyheld]').forEach((b) => b.onclick = async () => {
+      const [id, i] = b.dataset.lyheld.split('|'); const l = find(id); if (!l || !await ensureStaff()) return;
+      l.items[+i].held = !l.items[+i].held; putLayby(l); addLog('layby-held', { code: l.items[+i].code, name: l.name }); render(false);
+    });
+    $$('[data-lyn]').forEach((b) => b.onclick = async () => { if (!await ensureStaff()) return; const l = find(b.dataset.lyn); lyPushHist(l, '标为已通知'); l.status = 'notified'; l.notifiedAt = nowISO(); l.notifiedBy = S.staff; putLayby(l); addLog('layby-notified', { code: l.items.map((x) => x.code).join('、'), name: l.name }); toast('已标为已通知'); render(false); });
+    $$('[data-lyc]').forEach((b) => b.onclick = async () => { if (!await ensureStaff()) return; const l = find(b.dataset.lyc); lyPushHist(l, '标为已收货'); l.status = 'collected'; l.collectedAt = nowISO(); l.collectedBy = S.staff; putLayby(l); addLog('layby-collected', { code: l.items.map((x) => x.code).join('、'), name: l.name }); toast('已收货，已放进历史'); render(false); });
+    $$('[data-lyundo]').forEach((b) => b.onclick = async () => {
+      const l = find(b.dataset.lyundo); const h = (l.hist || [])[(l.hist || []).length - 1];
+      if (!h || !await ensureStaff() || !await confirmDlg(`撤回「${h.what}」（${fmtTime(h.t)} · ${h.by}）？订单会恢复到修改前的样子。`, '撤回')) return;
+      l.hist.pop(); Object.assign(l, JSON.parse(JSON.stringify(h.snap))); putLayby(l); addLog('layby-undo', { name: l.name }); toast('已撤回'); render(false);
+    });
     $$('[data-lyd]').forEach((b) => b.onclick = async () => { if (!await ensureStaff() || !await confirmDlg('删除这条 layby 记录？', '删除')) return; const id = b.dataset.lyd; S.laybys = S.laybys.filter((x) => x.id !== id); delLayby(id); render(false); });
+  }
+
+  // ---- new / edit one layby order (several pairs, smart recognition)
+  let lyForm = null, lyFormKey = '';
+  const PHONE_RE = /(?:\+?61[\s-]?|0)4\d{2}[\s-]?\d{3}[\s-]?\d{3}/;
+  function parseLaybyText(text) {
+    const out = { items: [], unknown: [], phone: '', name: '' };
+    let t = String(text || '');
+    const pm = t.match(PHONE_RE); if (pm) { out.phone = pm[0].replace(/\s+/g, ' ').trim(); t = t.replace(pm[0], ' '); }
+    const rec = recognize(t);
+    rec.forEach((r) => {
+      if (!r.code) { if (r.raw && /\d{3}/.test(r.raw)) out.unknown.push(r.raw); else if (!out.name && /^[A-Za-z一-龥][A-Za-z一-龥 .'-]{1,28}$/.test(String(r.raw).trim()) && String(r.raw).trim().split(/\s+/).length <= 3) out.name = String(r.raw).trim(); return; }
+      // what is left of the line after taking out the code and quantity = colour / size words
+      let rest = String(r.raw || '').replace(CODE_TOKEN, ' ').replace(/(?:[x×*]\s*\d{1,3}\b)|(?:\b\d{1,3}\s*(?:双|件|个|pcs?|pairs?|prs)\b)/ig, ' ');
+      const v = findVariant(r.code, [r.size, rest].filter(Boolean).join(' '));
+      out.items.push({ code: r.code, color: v ? v[0] : '', size: v ? v[1] : (r.size || (rest.match(/\b(\d{2}(?:\.5)?)\b/) || [])[1] || ''), qty: r.qty || 1, options: r.options, how: r.how, matched: !!v, rest: rest.trim() });
+    });
+    return out;
+  }
+  function viewLaybyEdit(id) {
+    const isNew = id === 'new';
+    const orig = isNew ? null : S.laybys.find((x) => x.id === id);
+    if (!isNew && !orig) { view(backLink() + '<div class="empty-state">找不到这个 layby</div>'); return; }
+    if (lyFormKey !== id || !lyForm) {
+      lyFormKey = id;
+      lyForm = isNew ? { name: '', phone: '', orderDate: today(), note: '', items: [{ code: '', color: '', size: '', qty: 1 }], text: '' } : Object.assign(JSON.parse(JSON.stringify(lySnap(orig))), { text: '' });
+    }
+    const f = lyForm;
+    const colOpts = (code) => [...new Set(vlist(resolveCode(code)).map((v) => v[0]).filter(Boolean))];
+    const sizOpts = (code) => [...new Set(vlist(resolveCode(code)).map((v) => v[1]))].sort(sizeCmp);
+    view(`${backLink()}<h1>${isNew ? '新 layby 预定' : '编辑 layby'}</h1>
+      <div class="card stack">
+        <div class="row"><label class="field grow">客人名字<input id="lfName" type="text" value="${esc(f.name)}"></label><label class="field grow">电话<input id="lfPhone" type="tel" inputmode="tel" value="${esc(f.phone)}"></label></div>
+        <label class="field">预定日期<input id="lfDate" type="date" value="${esc(f.orderDate)}"></label>
+        <details class="smart" open><summary><b>🔎 智能识别（可粘贴一整段）</b></summary>
+          <textarea id="lfText" rows="3" placeholder="例如：Jane 0412 345 678&#10;AS2115 chestnut 38 x2&#10;EA5048 black 7" autocapitalize="characters">${esc(f.text)}</textarea>
+          <div class="row"><button class="btn small primary" id="lfParse">识别并加入下面的列表</button><span id="lfMsg" class="small muted"></span></div></details>
+        <b>货品（可以有多双）</b>
+        <div id="lfItems">${f.items.map((it, i) => `<div class="ly-row" data-r="${i}">
+          <input class="c-code" data-f="code" data-i="${i}" type="text" autocapitalize="characters" placeholder="款号" value="${esc(it.code)}">
+          <input class="c-col" data-f="color" data-i="${i}" type="text" list="lc${i}" placeholder="颜色" value="${esc(it.color || '')}"><datalist id="lc${i}">${colOpts(it.code).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+          <input class="c-siz" data-f="size" data-i="${i}" type="text" list="ls${i}" placeholder="尺码" value="${esc(it.size || '')}"><datalist id="ls${i}">${sizOpts(it.code).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+          <input class="c-qty" data-f="qty" data-i="${i}" type="number" min="1" value="${it.qty || 1}">
+          <button class="btn small danger" data-rmi="${i}" aria-label="删除这一双">✕</button>
+          <div class="small ly-hint" id="lh${i}"></div></div>`).join('')}</div>
+        <button class="btn small" id="lfAdd">＋ 再加一双</button>
+        <label class="field">备注<input id="lfNote" type="text" value="${esc(f.note)}" placeholder="例如 已付订金 $50"></label>
+        ${isNew ? '' : `<label class="field">状态<select id="lfStatus">${Object.entries(LY_ST).map(([k, v]) => `<option value="${k}" ${f.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`}
+        <div class="row"><button class="btn grow" id="lfCancel">取消</button><button class="btn primary grow" id="lfSave">${isNew ? '提交 layby' : '保存修改'}</button></div>
+        ${isNew ? '' : '<div class="small muted">保存后仍可再次编辑；改错了可以在列表里点「撤回上次修改」。</div>'}
+      </div>`);
+    const hint = (i) => {
+      const it = f.items[i], el = $('#lh' + i); if (!el) return;
+      const c = resolveCode(it.code), p = P[c];
+      if (!it.code) { el.textContent = ''; return; }
+      if (!p) { el.innerHTML = '<span style="color:var(--warn)">⚠️ 库存表里没有这个款号</span>'; return; }
+      const v = (it.color || it.size) ? findVariant(c, [it.color, it.size].filter(Boolean).join(' ')) : null;
+      el.innerHTML = `✔ ${esc(shortName(p.name))} · 总库存 ${p.qty}${v ? ` · <b>${esc(vLabel(v))}</b> 现有 ${v[2]}` : vlist(c).length && (it.color || it.size) ? ' · <span style="color:var(--warn)">没找到这个颜色尺码的库存（可能正是在等的货）</span>' : ''}`;
+    };
+    f.items.forEach((_, i) => hint(i));
+    const sync = () => { f.name = $('#lfName').value; f.phone = $('#lfPhone').value; f.orderDate = $('#lfDate').value; f.note = $('#lfNote').value; f.text = $('#lfText').value; if ($('#lfStatus')) f.status = $('#lfStatus').value; };
+    ['#lfName', '#lfPhone', '#lfDate', '#lfNote', '#lfText', '#lfStatus'].forEach((s) => { if ($(s)) $(s).addEventListener('input', sync); });
+    $$('#lfItems input').forEach((inp) => {
+      inp.addEventListener('input', () => { const i = +inp.dataset.i, k = inp.dataset.f; f.items[i][k] = k === 'qty' ? (parseInt(inp.value, 10) || 1) : (k === 'code' ? inp.value.toUpperCase() : inp.value); hint(i); });
+      inp.addEventListener('change', () => {
+        if (inp.dataset.f !== 'code') return;
+        const i = +inp.dataset.i, c = resolveCode(inp.value) || inp.value.toUpperCase();
+        f.items[i].code = c; inp.value = c;
+        const lc = $('#lc' + i), ls = $('#ls' + i);
+        if (lc) lc.innerHTML = colOpts(c).map((x) => `<option value="${esc(x)}">`).join('');
+        if (ls) ls.innerHTML = sizOpts(c).map((x) => `<option value="${esc(x)}">`).join('');
+        hint(i);
+      });
+    });
+    $$('[data-rmi]').forEach((b) => b.onclick = () => { sync(); f.items.splice(+b.dataset.rmi, 1); if (!f.items.length) f.items.push({ code: '', color: '', size: '', qty: 1 }); render(false); });
+    $('#lfAdd').onclick = () => { sync(); f.items.push({ code: '', color: '', size: '', qty: 1 }); render(false); };
+    const doParse = () => {
+      sync();
+      const r = parseLaybyText(f.text);
+      if (!r.items.length && !r.phone && !r.name) { $('#lfMsg').textContent = '没认出款号'; return false; }
+      if (r.phone && !f.phone) f.phone = r.phone;
+      if (r.name && !f.name.trim()) f.name = r.name;
+      f.items = f.items.filter((x) => x.code).concat(r.items.map((x) => ({ code: x.code, color: x.color, size: x.size, qty: x.qty })));
+      if (!f.items.length) f.items.push({ code: '', color: '', size: '', qty: 1 });
+      f.text = r.unknown.join('\n'); render(false);
+      toast(`已加入 ${r.items.length} 双${r.unknown.length ? `，${r.unknown.length} 行没认出（留在输入框里）` : ''}`);
+      return true;
+    };
+    $('#lfParse').onclick = doParse;
+    $('#lfCancel').onclick = () => { lyForm = null; back(); };
+    $('#lfSave').onclick = async () => {
+      sync();
+      if ($('#lfText').value.trim()) doParse();
+      const items = f.items.filter((x) => x.code).map((x) => ({ code: resolveCode(x.code), color: (x.color || '').trim(), size: (x.size || '').trim(), qty: Math.max(1, parseInt(x.qty, 10) || 1), held: !!x.held }));
+      if (!f.name.trim()) { toast('请填写客人名字'); return; }
+      if (!items.length) { toast('请至少填一个款号'); return; }
+      const bad = items.filter((x) => !P[x.code]);
+      if (bad.length && !await confirmDlg(`库存表里没有 ${bad.map((x) => x.code).join('、')}，仍然保存？`, '保存')) return;
+      if (!await ensureStaff()) return;
+      if (isNew) {
+        const l = { id: uid(), name: f.name.trim(), phone: f.phone.trim(), orderDate: f.orderDate || today(), items, note: f.note.trim(), status: 'waiting', createdAt: nowISO(), staff: S.staff, hist: [] };
+        S.laybys.unshift(l); putLayby(l); addLog('layby', { code: items.map((x) => x.code).join('、'), name: l.name });
+        toast('已登记 layby');
+      } else {
+        const l = S.laybys.find((x) => x.id === id);
+        lyPushHist(l, '编辑订单');
+        Object.assign(l, { name: f.name.trim(), phone: f.phone.trim(), orderDate: f.orderDate || l.orderDate, note: f.note.trim(), items, updatedAt: nowISO(), updatedBy: S.staff });
+        if (f.status && f.status !== l.status) { l.status = f.status; if (f.status === 'notified' && !l.notifiedAt) { l.notifiedAt = nowISO(); l.notifiedBy = S.staff; } if (f.status === 'collected' && !l.collectedAt) { l.collectedAt = nowISO(); l.collectedBy = S.staff; } if (f.status === 'waiting') { l.notifiedAt = ''; l.collectedAt = ''; } }
+        putLayby(l); addLog('layby-edit', { code: items.map((x) => x.code).join('、'), name: l.name });
+        toast('已保存修改');
+      }
+      lyForm = null; back();
+    };
   }
 
   // ================================================================ 今日 tab: daily workflow
@@ -1864,7 +2209,7 @@
     const doneN = list.filter(isDone).length;
     const arrivals = arrivalsOn(date);
     const arrivedCodes = [...new Set(arrivals.flatMap((r) => r.lines.map((x) => x.code)))];
-    const lyWaiting = S.laybys.filter((l) => l.status === 'waiting' && (arrivedCodes.includes(l.code) || laybyReady(l)));
+    const lyA = lyAlerts();
     const isToday = date === today();
     view(`<div class="row between"><button class="btn small" id="dPrev">‹</button>
         <div style="text-align:center"><b style="font-size:18px">${esc(date)} ${WEEK[wd]}</b>${isToday ? '<div class="small muted">今天</div>' : `<div><button class="linkish" id="dToday">回到今天</button></div>`}</div>
@@ -1886,7 +2231,7 @@
               ${t.id === 'count' && !auto ? `<div class="stack" style="margin-top:6px"><textarea id="dCountIn" rows="3" placeholder="输入今天要清点的款号（6–8 款），每行一个或用空格分开&#10;例如：AS2115 EA7100 15801" autocapitalize="characters">${esc(lsGet('ugg-daycount-' + date) || '')}</textarea>
                 <div class="row"><button class="btn small primary" id="dCount">🔎 识别并开始清点</button><span class="small muted" id="dCountMsg"></span></div></div>` : ''}
               ${t.go ? `<a class="btn small" style="margin-top:4px" ${goAttr(...t.go)}>打开 ›</a>` : ''}
-              ${t.id === 'layby' && lyWaiting.length ? `<div class="small" style="color:var(--warn);margin-top:4px">有 ${lyWaiting.length} 位客人的货可能到了</div>` : ''}
+              ${t.id === 'layby' && (lyA.pendingHold.length || lyA.fresh.length) ? `<div class="small" style="color:var(--warn);margin-top:4px">${lyA.fresh.length ? `新 layby ${lyA.fresh.length} 个` : ''}${lyA.fresh.length && lyA.pendingHold.length ? ' · ' : ''}${lyA.pendingHold.length ? `⚑ ${lyA.pendingHold.length} 件到货要单独留出` : ''}</div>` : ''}
             </div></div>`;
         }).join('')}
       </div>
@@ -2336,7 +2681,8 @@
         ${mapTab !== 'other' ? '<button class="btn small" id="editLay">✏️ 调整地图</button>' : ''}
         <a class="btn small" ${goAttr('tidy')}>💡 整理建议</a>
         <button class="btn small" id="newLoc">＋ 新增位置</button>
-        <button class="btn small" id="sheetBtn">⬇️ 货位表 CSV</button></div>`}`);
+        <button class="btn small" id="sheetBtn">⬇️ 货位表 CSV</button>
+        ${mapTab !== 'other' ? '<button class="btn small" id="mapPng">🖼️ 下载地图图片</button><button class="btn small" id="mapPrint">🖨️ 打印地图</button>' : ''}</div>`}`);
     $$('.seg button').forEach((b) => b.onclick = () => { if (mapEditing) { toast('请先完成或取消地图调整'); return; } mapTab = b.dataset.t; cur.p = {}; render(false); });
     bindMap($('#view'));
     bindZoom($('#view'));
@@ -2397,6 +2743,7 @@
       editLayout = { storeroom: layoutFor('storeroom'), store: layoutFor('store'), labels: { storeroom: labelsFor('storeroom'), store: labelsFor('store') }, room: Object.assign({}, S.layout.room || {}) };
       mapEditing = true; selected = null; render(false);
     };
+    if ($('#mapPng')) { $('#mapPng').onclick = () => downloadMap(mapTab); $('#mapPrint').onclick = () => printMap(mapTab); }
     $('#newLoc').onclick = newLocation;
     $('#sheetBtn').onclick = () => saveFile(`货位表_${today()}.csv`, toCSV([['区域', '位置', '款号', '备注', '系统库存'],
       ...S.locations.flatMap((l) => (l.items.length ? l.items : [{ code: '', note: '（空）' }]).map((it) => [l.area === 'storeroom' ? '仓库' : l.area === 'store' ? '店面' : '其他', locLabel(l), it.code, it.note, P[resolveCode(it.code)] ? P[resolveCode(it.code)].qty : '']))]));
@@ -2744,6 +3091,125 @@ ${catalog()}`);
     bindNotes();
   }
 
+  // ---------------------------------------------------------------- map: download / print
+  function mapSvgString(area, withTitle) {
+    const el = $(`#view svg.mapsvg[data-area="${area}"]`) || $('svg.mapsvg');
+    if (!el) return '';
+    const c = el.cloneNode(true);
+    c.querySelectorAll('[data-roomhandle]').forEach((n) => n.remove());
+    const vb = c.getAttribute('viewBox').split(/\s+/).map(Number);
+    const head = withTitle ? 46 : 0;
+    c.setAttribute('viewBox', `0 ${-head} ${vb[2]} ${vb[3] + head}`);
+    c.setAttribute('width', vb[2]); c.setAttribute('height', vb[3] + head);
+    c.removeAttribute('style'); c.setAttribute('class', c.getAttribute('class').replace('editing', '').trim());
+    c.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    let css = '';
+    for (const sh of Array.from(document.styleSheets)) { try { for (const r of Array.from(sh.cssRules)) css += r.cssText + '\n'; } catch (e) { /* cross-origin sheet */ } }
+    const st = document.createElementNS('http://www.w3.org/2000/svg', 'style'); st.textContent = css; c.insertBefore(st, c.firstChild);
+    if (withTitle) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', 8); t.setAttribute('y', -14); t.setAttribute('font-size', 30); t.setAttribute('font-weight', 700); t.setAttribute('fill', '#2b2118');
+      t.textContent = `UGG Express ${area === 'storeroom' ? 'Storeroom 仓库' : 'Store 店面'} · ${today()}`;
+      c.insertBefore(t, c.firstChild.nextSibling);
+    }
+    return new XMLSerializer().serializeToString(c);
+  }
+  async function saveBlob(filename, blob) {
+    if (LOCAL) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); return true; }
+    if (!downloads) return false;
+    try { await downloads.save({ filename, data: blob }); return true; }
+    catch (e) { if (e && e.code === 'declined') return true; return false; }
+  }
+  async function downloadMap(area) {
+    const svg = mapSvgString(area, true);
+    if (!svg) { toast('没有可下载的地图'); return; }
+    const name = `货位图_${area === 'storeroom' ? '仓库' : '店面'}_${today()}`;
+    try {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+      const k = Math.min(2, 4000 / Math.max(img.width, img.height));
+      const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(img, 0, 0, cv.width, cv.height);
+      const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+      if (!blob || !await saveBlob(name + '.png', blob)) throw new Error('png');
+      toast('已下载地图图片'); return;
+    } catch (e) { console.warn('png export failed, falling back to svg', e); }
+    await saveFile(name + '.svg', svg);
+    toast('已下载地图（SVG 格式，可用浏览器打开后打印）');
+  }
+  function printMap(area) {
+    const svg = mapSvgString(area, true);
+    if (!svg) return;
+    if (!printHtml('', svg, true)) { toast('这里不能直接打印，请用「下载地图图片」再打印'); }
+  }
+
+  // ---------------------------------------------------------------- reminders (5:00pm order, 5:30pm notes) — this device
+  const REMIND_DEF = { order: { on: true, time: '17:00' }, notes: { on: true, time: '17:30' } };
+  const remindCfg = () => { let c = {}; try { c = JSON.parse(lsGet('ugg-remind') || '{}'); } catch (e) { c = {}; } return { order: Object.assign({}, REMIND_DEF.order, c.order), notes: Object.assign({}, REMIND_DEF.notes, c.notes) }; };
+  const nowHM = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const remindKey = (k) => `ugg-remind-${k}-${today()}`;
+  function remindContent(k) {
+    if (k === 'order') {
+      const wd = new Date().getDay();
+      return { icon: '🛒', title: '该订货了', body: `现在是订货时间。${wd === 1 ? '今天周一：别忘了订文具。' : wd === 3 ? '今天周三：别忘了订购物袋。' : ''}可以先看「库存 → 库存总览」里偏低的款。`, go: ['overview'] };
+    }
+    const open = sortNotes(S.notes.filter((n) => !n.done));
+    return { icon: '📝', title: '便签提醒', body: open.length ? `还有 ${open.length} 张便签没完成：${open.slice(0, 3).map((n) => n.text.split('\n')[0].slice(0, 20)).join('；')}${open.length > 3 ? '…' : ''}` : '没有未完成的便签，可以去看看有没有要交接的事。', go: ['notes'] };
+  }
+  function showRemind(k) {
+    const c = remindContent(k);
+    let bar = $('#remindBar');
+    if (!bar) { bar = document.createElement('div'); bar.id = 'remindBar'; document.body.appendChild(bar); }
+    const item = document.createElement('div'); item.className = 'remind'; item.dataset.k = k;
+    item.innerHTML = `<div class="grow"><b>${c.icon} ${esc(c.title)}</b><div class="small">${esc(c.body)}</div></div>
+      <button class="btn small" data-rgo>查看</button><button class="btn small" data-rlater>10 分钟后</button><button class="btn small primary" data-rdone>知道了</button>`;
+    translateTree(item);
+    bar.appendChild(item);
+    item.querySelector('[data-rgo]').onclick = () => { lsSet(remindKey(k), 'done'); item.remove(); navigate({ n: c.go[0], a: '', p: {} }); };
+    item.querySelector('[data-rlater]').onclick = () => { lsSet(remindKey(k), 'snooze:' + (Date.now() + 10 * 60000)); item.remove(); };
+    item.querySelector('[data-rdone]').onclick = () => { lsSet(remindKey(k), 'done'); item.remove(); };
+    try { if ('Notification' in window && Notification.permission === 'granted' && !item.dataset.notified) new Notification('UGG 货位助手 · ' + tr(c.title), { body: tr(c.body) }); } catch (e) { /* not allowed here */ }
+  }
+  function remindTick() {
+    const cfg = remindCfg();
+    ['order', 'notes'].forEach((k) => {
+      if (!cfg[k].on || nowHM() < cfg[k].time) return;
+      const st = lsGet(remindKey(k));
+      if (st === 'done') return;
+      if (st && st.startsWith('snooze:') && Date.now() < Number(st.slice(7))) return;
+      if ($(`#remindBar .remind[data-k="${k}"]`)) return;
+      showRemind(k);
+    });
+  }
+  setInterval(remindTick, 20000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) remindTick(); });
+  window.addEventListener('focus', remindTick);
+  function remindIcs() {
+    const cfg = remindCfg(), d0 = today().replace(/-/g, '');
+    const ev = (k, title, desc) => { const [h, m] = cfg[k].time.split(':'); return `BEGIN:VEVENT\r\nUID:ugg-${k}@ugg-stock-app\r\nDTSTAMP:${d0}T000000Z\r\nDTSTART:${d0}T${h}${m}00\r\nDURATION:PT15M\r\nRRULE:FREQ=DAILY\r\nSUMMARY:${title}\r\nDESCRIPTION:${desc}\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:${title}\r\nTRIGGER:PT0M\r\nEND:VALARM\r\nEND:VEVENT\r\n`; };
+    return `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//UGG stock app//EN\r\nCALSCALE:GREGORIAN\r\n${ev('order', 'UGG: Place the order 该订货了', 'Check low stock and place today order')}${ev('notes', 'UGG: Check sticky notes 看便签', 'Open the sticky notes in the stock app')}END:VCALENDAR\r\n`;
+  }
+
+  // A newer Vend report (with colours and sizes) shipped with the app is applied once, on whichever device opens it first.
+  let seedTried = false;
+  function maybeApplyVariantSeed() {
+    const vs = window.VARIANT_SEED;
+    if (seedTried || !vs || !S.loaded.variants || !S.loaded.meta || !S.loaded.products || S.readOnly) return;
+    seedTried = true;
+    if (S.variantsAt && String(S.variantsAt) >= vs.importedAt) return;
+    const old = {}; S.products.forEach((p) => { old[p.code] = p; });
+    S.variants = JSON.parse(JSON.stringify(vs.list)); S.variantsAt = vs.importedAt;
+    putVariants();
+    if (!S.vendImportedAt || String(S.vendImportedAt) < vs.importedAt) {
+      const nameOf = (c) => (old[c] ? old[c].name : vs.names[c] || c);
+      S.products = Object.keys(vs.list).map((c) => ({ code: c, name: nameOf(c), qty: vs.list[c].reduce((a, v) => a + v[2], 0), closing: 0, lastReceived: old[c] ? old[c].lastReceived || '' : '' }));
+      // styles Vend no longer lists keep no stock
+      S.vendImportedAt = vs.importedAt; putProducts(); putMeta();
+      addLog('import', { file: vs.file || 'Vend（颜色尺码）', n: S.products.length, changed: 0, added: 0 });
+    }
+    rebuildIndex(); scheduleRender();
+  }
+
   // ---------------------------------------------------------------- boot
   function renderStaff() {
     const c = $('#staffChip');
@@ -2799,6 +3265,13 @@ ${catalog()}`);
       S.products = JSON.parse(JSON.stringify(d.list || []));
       S.loaded.products = true;
     }, 'products');
+    subscribe(db.doc('variants/all'), (snap) => {
+      const d = snap.exists ? snap.data() : {};
+      S.variants = JSON.parse(JSON.stringify(d.list || {}));
+      S.variantsAt = d.importedAt || '';
+      S.loaded.variants = true;
+      maybeApplyVariantSeed();
+    });
     subscribe(db.doc('meta/main'), (snap) => {
       const d = snap.exists ? snap.data() : {};
       S.unitNames = Object.assign({}, d.unitNames || {});
@@ -2806,6 +3279,7 @@ ${catalog()}`);
       S.vendImportedAt = d.vendImportedAt || '';
       S.cap = Object.assign({ h: 6, l: 7, d: 2, display: 2, mode: 'cell', xl: ['15901', '15902'], xlH: 5, xlD: 1, daily: 8 }, d.cap || {});
       S.loaded.meta = true;
+      maybeApplyVariantSeed();
     });
     subscribe(db.doc('meta/layout'), (snap) => {
       const d = snap.exists ? JSON.parse(JSON.stringify(snap.data())) : {};
@@ -2815,7 +3289,7 @@ ${catalog()}`);
       S.notes = snap.docs.map((d) => Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data()))));
     });
     subscribe(db.collection('laybys').orderBy('createdAt', 'desc').limit(300), (snap) => {
-      S.laybys = snap.docs.map((d) => Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data()))));
+      S.laybys = snap.docs.map((d) => normLayby(Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data())))));
     });
     subscribe(db.collection('imports').orderBy('date', 'desc').limit(100), (snap) => {
       S.imports = snap.docs.map((d) => Object.assign({ id: d.id }, JSON.parse(JSON.stringify(d.data()))));

@@ -1,7 +1,7 @@
 // Offline support: the app keeps working in the storeroom even with weak signal.
 // Network first (so updates arrive right away), fall back to the cached copy.
-const CACHE = 'ugg-stock-app-v3';
-const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'i18n.js', 'data/seed.js', 'vendor/xlsx.full.min.js', 'manifest.webmanifest', 'icon.svg'];
+const CACHE = 'ugg-stock-app-v4';
+const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'i18n.js', 'data/seed.js', 'data/variants.js', 'vendor/xlsx.full.min.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
