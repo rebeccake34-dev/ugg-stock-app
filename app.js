@@ -2105,7 +2105,16 @@
     const out = { items: [], unknown: [], phone: '', name: '' };
     let t = String(text || '');
     const pm = t.match(PHONE_RE); if (pm) { out.phone = pm[0].replace(/\s+/g, ' ').trim(); t = t.replace(pm[0], ' '); }
-    const rec = recognize(t);
+    const keep = [];
+    t.split(/\n/).forEach((ln) => {
+      const um = ln.match(/(?<![A-Za-z0-9])([A-Za-z]{1,4}[_-]?\d{3,7}[A-Za-z]?)(?![A-Za-z0-9])/);
+      if (um && !P[resolveCode(um[1].toUpperCase())]) {
+        const rest0 = ln.replace(um[0], ' '), q0 = rest0.match(/[x×*]\s*(\d{1,2})\b/), sz = (rest0.match(/\b(L\d{1,2}\/\d{2}|\d{2}(?:\.5)?)\b/) || [])[1] || '';
+        const col = (rest0.toUpperCase().split(/\s+/).map((w) => COLOR_ABBR[w]).find(Boolean)) || Object.values(allColors()).find((c) => new RegExp('\\b' + c + '\\b', 'i').test(rest0)) || '';
+        out.items.push({ code: um[1].toUpperCase(), color: col, size: sz, qty: q0 ? +q0[1] : 1, matched: false, rest: rest0.trim() });
+      } else keep.push(ln);
+    });
+    const rec = recognize(keep.join('\n'));
     rec.forEach((r) => {
       if (!r.code) { if (r.raw && /\d{3}/.test(r.raw)) out.unknown.push(r.raw); else if (!out.name && /^[A-Za-z一-龥][A-Za-z一-龥 .'-]{1,28}$/.test(String(r.raw).trim()) && String(r.raw).trim().split(/\s+/).length <= 3) out.name = String(r.raw).trim(); return; }
       // what is left of the line after taking out the code and quantity = colour / size words
@@ -2192,8 +2201,6 @@
       const items = f.items.filter((x) => x.code).map((x) => ({ code: resolveCode(x.code), color: (x.color || '').trim(), size: (x.size || '').trim(), qty: Math.max(1, parseInt(x.qty, 10) || 1), held: !!x.held }));
       if (!f.name.trim()) { toast('请填写客人名字'); return; }
       if (!items.length) { toast('请至少填一个款号'); return; }
-      const bad = items.filter((x) => !P[x.code]);
-      if (bad.length && !await confirmDlg(`库存表里没有 ${bad.map((x) => x.code).join('、')}，仍然保存？`, '保存')) return;
       if (!await ensureStaff()) return;
       if (isNew) {
         const l = { id: uid(), name: f.name.trim(), phone: f.phone.trim(), orderDate: f.orderDate || today(), items, note: f.note.trim(), status: 'waiting', createdAt: nowISO(), staff: S.staff, hist: [] };
