@@ -392,13 +392,13 @@
   let cur = { n: 'today', a: '', p: {} };
   const stack = [];
   const routes = {
-    today: viewToday, overview: viewStock, layby: viewLayby, laybyEdit: viewLaybyEdit, search: viewSearch, map: viewMap, loc: viewLoc, count: viewCount, countReport: viewCountReport,
+    today: viewToday, overview: viewStock, layby: viewLayby, laybyEdit: viewLaybyEdit, laybyBulk: viewLaybyBulk, search: viewSearch, map: viewMap, loc: viewLoc, count: viewCount, countReport: viewCountReport,
     returns: viewReturns, stock: viewStockHub, more: viewMore, log: viewLog, import: viewImport, product: viewProduct,
     shelf: viewShelf, tidy: viewTidy, docs: viewDocs, bulk: viewBulk, notes: viewNotes,
   };
-  const GROUP = { notes: 'today', bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', laybyEdit: 'layby', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
+  const GROUP = { notes: 'today', bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', laybyEdit: 'layby', laybyBulk: 'layby', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
   let rootOrigin = null;   // the tab screen the current drill-down started from
-  const PARENT = { laybyEdit: 'layby', countReport: 'count' };
+  const PARENT = { laybyEdit: 'layby', laybyBulk: 'layby', countReport: 'count' };
   function navigate(r, push = true) {
     if (push && TABS.includes(cur.n)) rootOrigin = cur;
     if (push) stack.push(cur);
@@ -1983,7 +1983,7 @@
     const arr = arrivalList(), al = lyAlerts(), list = lyFiltered(), td = today();
     const cnt = (s) => S.laybys.filter((l) => l.status === s).length;
     const holdCards = al.hold.filter((h) => !h.it.held);
-    view(`<div class="row between"><h1 style="margin:0">🧾 Layby</h1><a class="btn primary" ${goAttr('laybyEdit', 'new')}>＋ 新 layby</a></div>
+    view(`<div class="row between"><h1 style="margin:0">🧾 Layby</h1><div class="row"><a class="btn" ${goAttr('laybyBulk')}>＋ 一键添加多个</a><a class="btn primary" ${goAttr('laybyEdit', 'new')}>＋ 新 layby</a></div></div>
       ${isRecvDay(td) ? `<div class="card ly-banner">📥 <b>今天是收货日</b>（${WEEK[dow(td)]}）：${al.fresh.length ? `自上个收货日起有 <b>${al.fresh.length}</b> 个新 layby；` : '没有新的 layby；'}${holdCards.length ? `<b>${holdCards.length}</b> 件到货要单独留出。` : '暂时没有需要留出的到货。'}</div>` : (al.fresh.length ? `<div class="card ly-banner small">自上个收货日（${esc(prevRecvDay(td))}）起新增 ${al.fresh.length} 个 layby</div>` : '')}
       ${holdCards.length ? `<div class="card ly-hotbox"><b>⚑ 需要单独留出的 layby 货（${holdCards.length}）</b>
         ${holdCards.map((h) => `<div class="item-line"><div class="grow"><a ${goAttr('product', resolveCode(h.it.code))} class="code">${esc(h.it.code)}</a> ${esc(itemText(h.it))} × ${h.it.qty || 1}<div class="small muted">${esc(h.l.name)} · 订于 ${esc(h.l.orderDate)}${(codeLocs[resolveCode(h.it.code)] || []).length ? ' · ' + codeLocs[resolveCode(h.it.code)].map((id) => esc(locLabel(locById[id]))).join('、') : ''}</div></div><button class="btn small primary" data-lyheld="${esc(h.l.id)}|${h.i}">已留出</button></div>`).join('')}</div>` : ''}
@@ -2026,6 +2026,76 @@
       l.hist.pop(); Object.assign(l, JSON.parse(JSON.stringify(h.snap))); putLayby(l); addLog('layby-undo', { name: l.name }); toast('已撤回'); render(false);
     });
     $$('[data-lyd]').forEach((b) => b.onclick = async () => { if (!await ensureStaff() || !await confirmDlg('删除这条 layby 记录？', '删除')) return; const id = b.dataset.lyd; S.laybys = S.laybys.filter((x) => x.id !== id); delLayby(id); render(false); });
+  }
+
+  // ---- add many layby orders at once: one order per line, e.g. "Jane 0400000000 AS2115 CN L8/39 NP"
+  const COLOR_ABBR = { CN: 'Chestnut', CHOC: 'Chocolate', BLK: 'Black', SN: 'Sand' };
+  const SIZE_TOK = /^(L\d{1,2}\/\d{2}|\d{2}(?:\.5)?|XXL|XL|XS|S|M|L|\d{1,2}-\d{1,2}|FREE)$/i;
+  const CODE_ONLY = /^[A-Za-z_]{0,12}\d{3,7}[A-Za-z]?$/;
+  function allColors() { const m = {}; Object.values(S.variants).forEach((rows) => rows.forEach((v) => { String(v[0]).split('/').forEach((c) => { if (c) m[c.toLowerCase()] = c; }); })); return m; }
+  function parseLaybyLine(line, colors) {
+    let t = String(line || '').trim(); if (!t) return null;
+    let phone = '';
+    const pm = t.match(PHONE_RE); if (pm) { phone = pm[0].replace(/[\s-]+/g, ''); t = t.replace(pm[0], ' | '); }
+    const tok = t.split(/\s+/).filter(Boolean);
+    const ci = tok.findIndex((x) => CODE_ONLY.test(x) && /\d{3}/.test(x));
+    if (ci < 0) return { raw: line, error: '没找到款号' };
+    const name = tok.slice(0, ci).filter((x) => x !== '|').join(' ');
+    const rawCode = tok[ci].toUpperCase(), code = P[resolveCode(rawCode)] ? resolveCode(rawCode) : rawCode;
+    const it = { code, color: '', size: '', qty: 1, held: false }, note = [];
+    tok.slice(ci + 1).forEach((w) => {
+      const up = w.toUpperCase(), q = w.match(/^[x×*](\d{1,2})$/i);
+      if (q) it.qty = parseInt(q[1], 10);
+      else if (COLOR_ABBR[up] && !it.color) it.color = COLOR_ABBR[up];
+      else if (SIZE_TOK.test(w) && !it.size) it.size = /^[a-z]/i.test(w) ? up : w;
+      else if (!it.color && /^[A-Za-z]{3,}$/.test(w) && colors[w.toLowerCase()]) it.color = colors[w.toLowerCase()];
+      else note.push(w);
+    });
+    return { raw: line, name, phone, item: it, note: note.join(' '), known: !!P[code] };
+  }
+  function groupLaybyLines(text) {
+    const colors = allColors(), orders = [], bad = [];
+    String(text || '').split(/\n/).forEach((ln) => {
+      const r = parseLaybyLine(ln, colors); if (!r) return;
+      if (r.error || !r.name) { bad.push(r.raw + (r.error ? `（${r.error}）` : '（没有名字）')); return; }
+      const key = (r.phone || r.name.toLowerCase());
+      let o = orders.find((x) => x.key === key);
+      if (!o) { o = { key, name: r.name, phone: r.phone, items: [], notes: [] }; orders.push(o); }
+      o.items.push(r.item); if (r.note && !o.notes.includes(r.note)) o.notes.push(r.note);
+      if (!r.known) o.unknown = (o.unknown || []).concat(r.item.code);
+    });
+    return { orders, bad };
+  }
+  let lbText = '', lbDate = '';
+  function viewLaybyBulk() {
+    if (!lbDate) lbDate = today();
+    const { orders, bad } = groupLaybyLines(lbText);
+    view(`${backLink()}<h1>一键添加多个 layby</h1>
+      <div class="card stack">
+        <div class="small muted">每行一个订单：<b>名字 电话 款号 颜色 尺码 备注</b>，例如<br><code>Jane 0400000000 AS2115 CN L8/39 NP</code><br>同一个客人（同电话）有几行，会合成一个订单；<code>x2</code> 表示 2 双。颜色可写 CN（Chestnut）、CHOC、BLK、SN 或完整英文名；认不出的字会放进备注。</div>
+        <label class="field">预定日期（这批订单都用这个日期）<input id="lbDate" type="date" value="${esc(lbDate)}"></label>
+        <textarea id="lbText" rows="7" placeholder="Jane 0400000000 AS2115 CN L8/39 NP&#10;Amy 0400000001 AS3112 CN 40 FP&#10;Lisa 0400000002 AS3047 CHOC 37 NP" autocapitalize="characters">${esc(lbText)}</textarea>
+        <button class="btn" id="lbGo">🔎 识别</button></div>
+      ${bad.length ? `<div class="card" style="border-color:var(--bad)"><b style="color:var(--bad)">这些行没认出，不会添加：</b>${bad.map((b) => `<div class="small">${esc(b)}</div>`).join('')}</div>` : ''}
+      ${orders.length ? `<h2>识别结果：${orders.length} 个订单</h2>${orders.map((o) => `<div class="card"><b>${esc(o.name)}</b> <span class="small">${esc(o.phone)}</span>
+        ${o.items.map((it) => `<div class="ly-item">${esc(it.code)} ${esc(itemText(it))} <b>× ${it.qty}</b>${P[it.code] ? ` <span class="small muted">${esc(shortName(P[it.code].name))}</span>` : ''}</div>`).join('')}
+        ${o.notes.length ? `<div class="small muted">备注：${esc(o.notes.join(' / '))}</div>` : ''}
+        ${o.unknown ? `<div class="small" style="color:var(--warn)">⚠️ 库存表里没有 ${esc(o.unknown.join('、'))}（可能正在等货，仍会添加）</div>` : ''}</div>`).join('')}
+        <button class="btn primary block" id="lbAdd">✔ 全部添加（${orders.length} 个订单）</button>` : ''}`);
+    const sync = () => { lbText = $('#lbText').value; lbDate = $('#lbDate').value || today(); };
+    $('#lbText').addEventListener('input', sync); $('#lbDate').addEventListener('input', sync);
+    $('#lbGo').onclick = () => { sync(); render(false); };
+    if ($('#lbAdd')) $('#lbAdd').onclick = async () => {
+      sync();
+      if (!await ensureStaff()) return;
+      let n = 0;
+      orders.forEach((o, i) => {
+        const l = { id: uid(), name: o.name, phone: o.phone, orderDate: lbDate, items: o.items, note: o.notes.join(' / '), status: 'waiting', createdAt: new Date(Date.now() + i).toISOString(), staff: S.staff, hist: [] };
+        S.laybys.unshift(l); putLayby(l); addLog('layby', { code: l.items.map((x) => x.code).join('、'), name: l.name }); n++;
+      });
+      lbText = bad.join('\n'); toast(`已添加 ${n} 个 layby`);
+      stack.length = 0; navigate({ n: 'layby', a: '', p: {} }, false);
+    };
   }
 
   // ---- new / edit one layby order (several pairs, smart recognition)
