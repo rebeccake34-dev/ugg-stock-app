@@ -183,6 +183,7 @@
       store['products/all'] = { list: seed.products, importedAt: seed.generated || '' };
       store['meta/main'] = Object.assign({ unitNames: {}, lowStock: 3 }, seed.meta || {}, { vendImportedAt: seed.generated || '' });
       if (seed.layout) store['meta/layout'] = seed.layout;
+      (seed.laybys || []).forEach((l) => { const c = Object.assign({}, l); delete c.id; store['laybys/' + l.id] = c; });
       store.__seed = { version: seed.version || '', layout: JSON.stringify(seed.layout || null) };
     } else if (seed.version && (!store.__seed || store.__seed.version !== seed.version)) {
       // a newer default map was published: take it over unless this device has its own changes
@@ -209,6 +210,7 @@
         if (!cur && p.add) store[k] = Object.assign({}, p.add);
         else if (cur && p.from && sameItems(cur.items, p.from)) store[k] = Object.assign({}, cur, { items: p.to });
       });
+      (seed.laybys || []).forEach((l) => { const k = 'laybys/' + l.id; if (!store[k]) { const c = Object.assign({}, l); delete c.id; store[k] = c; } });
       store.__seed = { version: seed.version, layout: JSON.stringify(seed.layout || null) };
     }
     const subs = new Set();
@@ -3324,5 +3326,19 @@ ${catalog()}`);
     });
     const h = location.hash.replace(/^#/, '');
     if (TABS.includes(h)) cur = { n: h, a: '', p: {} };
+    // one-time link that adds layby orders on this device:  #addlayby=<base64 of a JSON list>  (keeps customer details out of the public code)
+    if (h.startsWith('addlayby=')) {
+      let list = [];
+      try { list = JSON.parse(decodeURIComponent(escape(atob(h.slice(9).replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { list = []; }
+      const wait = setInterval(() => {
+        if (!(S.loaded.locations && S.loaded.products)) return;
+        clearInterval(wait);
+        let n = 0;
+        list.forEach((l) => { if (!l.id || S.laybys.some((x) => x.id === l.id)) return; const o = normLayby(Object.assign({ status: 'waiting', hist: [] }, l)); S.laybys.unshift(o); putLayby(o); n++; });
+        history.replaceState(null, '', location.pathname + location.search + '#layby');
+        cur = { n: 'layby', a: '', p: {} }; render(true);
+        toast(n ? `已添加 ${n} 个 layby` : '这些 layby 已经在里面了');
+      }, 200);
+    }
   })();
 })();
