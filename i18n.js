@@ -873,5 +873,9 @@ window.I18N_EN = {
 "10 分钟后": "In 10 min",
 "知道了": "Got it",
 "已保存": "Saved",
-"下载后打开这个文件，选「添加到日历」，每天会在设定时间响铃提醒。": "Open the downloaded file and choose \"Add to calendar\" — it will ring daily at the set times."
+"下载后打开这个文件，选「添加到日历」，每天会在设定时间响铃提醒。": "Open the downloaded file and choose \"Add to calendar\" — it will ring daily at the set times.",
+"🔍 搜索 layby：名字、电话、款号、颜色、尺码、备注": "🔍 Search laybys: name, phone, style, colour, size, note",
+"搜索全部订单（含历史），共 ": "Searching all orders (history included): ",
+"清除搜索": "Clear search",
+"没有找到匹配的 layby": "No matching layby"
 };

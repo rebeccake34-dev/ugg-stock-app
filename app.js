@@ -395,13 +395,21 @@
     shelf: viewShelf, tidy: viewTidy, docs: viewDocs, bulk: viewBulk, notes: viewNotes,
   };
   const GROUP = { notes: 'today', bulk: 'map', loc: 'map', shelf: 'map', tidy: 'map', countReport: 'count', overview: 'stock', returns: 'stock', laybyEdit: 'layby', import: 'stock', docs: 'stock', log: 'more', product: 'search' };
+  let rootOrigin = null;   // the tab screen the current drill-down started from
+  const PARENT = { laybyEdit: 'layby', countReport: 'count' };
   function navigate(r, push = true) {
+    if (push && TABS.includes(cur.n)) rootOrigin = cur;
     if (push) stack.push(cur);
     if (stack.length > 50) stack.shift();
     cur = r;
     render(true);
   }
-  function back() { navigate(stack.pop() || { n: 'today', a: '', p: {} }, false); }
+  // Back goes UP one level (to the list / tab the screen belongs to), not to whatever screen was open before.
+  function back() {
+    const n = PARENT[cur.n] || (rootOrigin && rootOrigin.n) || GROUP[cur.n] || 'today';
+    stack.length = 0;
+    navigate({ n: TABS.includes(n) ? n : (GROUP[n] || 'today'), a: '', p: {} }, false);
+  }
   function render(scrollTop) {
     if (!(S.loaded.locations && S.loaded.products)) return;
     const y = window.scrollY;
@@ -432,7 +440,7 @@
   });
   function fromHash() {
     const h = location.hash.replace(/^#/, '');
-    if (TABS.includes(h)) { if (cur.n !== h || stack.length) { stack.length = 0; cur = { n: h, a: '', p: {} }; render(true); } }
+    if (TABS.includes(h)) { if (cur.n !== h || stack.length) { stack.length = 0; rootOrigin = null; cur = { n: h, a: '', p: {} }; render(true); } }
   }
   window.addEventListener('hashchange', fromHash);
   const view = (html) => { $('#view').innerHTML = (S.readOnly ? '<div class="banner">你只有查看权限：可以查找，但不能修改。</div>' : '') + html; };
@@ -1919,9 +1927,12 @@
   }
   const lySnap = (l) => JSON.parse(JSON.stringify({ name: l.name, phone: l.phone, orderDate: l.orderDate, note: l.note, items: l.items, status: l.status, notifiedAt: l.notifiedAt || '', notifiedBy: l.notifiedBy || '', collectedAt: l.collectedAt || '', collectedBy: l.collectedBy || '' }));
   function lyPushHist(l, what) { l.hist = (l.hist || []).slice(-7); l.hist.push({ t: nowISO(), by: S.staff, what, snap: lySnap(l) }); }
-  let laybyFilter = 'active', laybySort = 'asc';
+  let laybyFilter = 'active', laybySort = 'asc', laybyQ = '';
+  const lyHay = (l) => [l.name, l.phone, String(l.phone || '').replace(/\D/g, ''), l.note, l.orderDate, LY_ST[l.status], ...l.items.map((it) => [it.code, it.color, it.size, P[resolveCode(it.code)] ? P[resolveCode(it.code)].name : ''].join(' '))].join(' ').toLowerCase();
   function lyFiltered() {
-    let list = S.laybys.filter((l) => laybyFilter === 'all' || (laybyFilter === 'active' ? l.status !== 'collected' : l.status === laybyFilter));
+    const toks = laybyQ.toLowerCase().split(/\s+/).filter(Boolean);
+    // while searching, look through every order (history included)
+    let list = S.laybys.filter((l) => toks.length ? toks.every((t) => lyHay(l).includes(t) || (/^\d{3,}$/.test(t) && lyHay(l).includes(t))) : (laybyFilter === 'all' || (laybyFilter === 'active' ? l.status !== 'collected' : l.status === laybyFilter)));
     list = list.slice().sort((a, b) => String(a.orderDate).localeCompare(String(b.orderDate)) || String(a.createdAt).localeCompare(String(b.createdAt)));
     return laybySort === 'desc' ? list.reverse() : list;
   }
@@ -1974,6 +1985,8 @@
       ${isRecvDay(td) ? `<div class="card ly-banner">📥 <b>今天是收货日</b>（${WEEK[dow(td)]}）：${al.fresh.length ? `自上个收货日起有 <b>${al.fresh.length}</b> 个新 layby；` : '没有新的 layby；'}${holdCards.length ? `<b>${holdCards.length}</b> 件到货要单独留出。` : '暂时没有需要留出的到货。'}</div>` : (al.fresh.length ? `<div class="card ly-banner small">自上个收货日（${esc(prevRecvDay(td))}）起新增 ${al.fresh.length} 个 layby</div>` : '')}
       ${holdCards.length ? `<div class="card ly-hotbox"><b>⚑ 需要单独留出的 layby 货（${holdCards.length}）</b>
         ${holdCards.map((h) => `<div class="item-line"><div class="grow"><a ${goAttr('product', resolveCode(h.it.code))} class="code">${esc(h.it.code)}</a> ${esc(itemText(h.it))} × ${h.it.qty || 1}<div class="small muted">${esc(h.l.name)} · 订于 ${esc(h.l.orderDate)}${(codeLocs[resolveCode(h.it.code)] || []).length ? ' · ' + codeLocs[resolveCode(h.it.code)].map((id) => esc(locLabel(locById[id]))).join('、') : ''}</div></div><button class="btn small primary" data-lyheld="${esc(h.l.id)}|${h.i}">已留出</button></div>`).join('')}</div>` : ''}
+      <input id="lySearch" type="search" placeholder="🔍 搜索 layby：名字、电话、款号、颜色、尺码、备注" value="${esc(laybyQ)}" autocomplete="off" style="margin-bottom:8px">
+      ${laybyQ ? `<div class="small muted" style="margin-bottom:6px">搜索全部订单（含历史），共 ${list.length} 个 · <button class="linkish" id="lyClear">清除搜索</button></div>` : ''}
       <div class="seg">
         <button data-lf="active" class="${laybyFilter === 'active' ? 'on' : ''}">进行中 (${cnt('waiting') + cnt('notified')})</button>
         <button data-lf="waiting" class="${laybyFilter === 'waiting' ? 'on' : ''}">等货 (${cnt('waiting')})</button>
@@ -1981,9 +1994,15 @@
         <button data-lf="collected" class="${laybyFilter === 'collected' ? 'on' : ''}">历史·已收货 (${cnt('collected')})</button></div>
       <div class="row between" style="margin:8px 0"><button class="btn small" id="lySort">按日期：${laybySort === 'asc' ? '旧 → 新 ⇅' : '新 → 旧 ⇅'}</button>
         <div class="row"><button class="btn small" id="lyCsv">⬇️ 下载表格</button><button class="btn small" id="lyPrint">🖨️ 打印</button></div></div>
-      ${list.map((l) => lyCard(l, arr)).join('') || '<div class="empty-state">这里没有记录</div>'}
+      ${list.map((l) => lyCard(l, arr)).join('') || `<div class="empty-state">${laybyQ ? '没有找到匹配的 layby' : '这里没有记录'}</div>`}
       <p class="small muted">客人的名字和电话会保存在这个应用里，能打开这个页面的人都能看到。「已收货」的订单才会进入历史。</p>`);
-    $$('[data-lf]').forEach((b) => b.onclick = () => { laybyFilter = b.dataset.lf; render(false); });
+    $$('[data-lf]').forEach((b) => b.onclick = () => { laybyFilter = b.dataset.lf; laybyQ = ''; render(false); });
+    const lq = $('#lySearch');
+    lq.addEventListener('input', () => {
+      laybyQ = lq.value.trim(); clearTimeout(viewLayby._t);
+      viewLayby._t = setTimeout(() => { render(false); const i = $('#lySearch'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250);
+    });
+    if ($('#lyClear')) $('#lyClear').onclick = () => { laybyQ = ''; render(false); };
     $('#lySort').onclick = () => { laybySort = laybySort === 'asc' ? 'desc' : 'asc'; render(false); };
     $('#lyCsv').onclick = () => saveFile(`layby_${LY_ST[laybyFilter] || (laybyFilter === 'active' ? '进行中' : '全部')}_${today()}.csv`, toCSV(lyRows(list)));
     $('#lyPrint').onclick = () => {
